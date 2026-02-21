@@ -1,0 +1,5 @@
+{
+  "name": "KDB-Data Validation",
+  "description": "Digital data validation form for the KDB-KCO with Google Sheets integration.",
+  "requestFramePermissions": []
+}
