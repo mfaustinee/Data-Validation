@@ -197,10 +197,20 @@ export default function App() {
   const handleConnect = async () => {
     try {
       const res = await fetch('/api/auth/url');
-      const { url } = await res.json();
-      window.open(url, 'google_auth', 'width=600,height=700');
-    } catch (err) {
-      setStatus({ type: 'error', message: 'Failed to get auth URL. Check environment variables.' });
+      const data = await res.json();
+      
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to get auth URL');
+      }
+
+      if (data.url) {
+        const authWindow = window.open(data.url, 'google_auth', 'width=600,height=700');
+        if (!authWindow) {
+          setStatus({ type: 'error', message: 'Popup blocked! Please allow popups for this site to connect.' });
+        }
+      }
+    } catch (err: any) {
+      setStatus({ type: 'error', message: err.message || 'Failed to connect. Check environment variables.' });
     }
   };
 
