@@ -14,7 +14,8 @@ const __dirname = path.dirname(__filename);
 
 const db = (() => {
   try {
-    const database = new Database("auth.db");
+    const dbPath = process.env.VERCEL ? path.join("/tmp", "auth.db") : "auth.db";
+    const database = new Database(dbPath);
     database.exec("CREATE TABLE IF NOT EXISTS tokens (id INTEGER PRIMARY KEY, access_token TEXT, refresh_token TEXT, scope TEXT, token_type TEXT, expiry_date INTEGER)");
     return database;
   } catch (err) {
@@ -212,3 +213,5 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 startServer();
+
+export default app;
