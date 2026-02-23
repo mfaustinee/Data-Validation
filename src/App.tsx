@@ -346,17 +346,25 @@ export default function App() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsSubmitting(true);
+    setStatus({ type: null, message: '' });
+
+    // Validation
     if (!isConnected) {
-      setStatus({ type: 'error', message: 'Please connect to Google Sheets first.' });
+      setStatus({ type: 'error', message: 'Please connect to Google Sheets first (top of page).' });
+      setIsSubmitting(false);
       return;
     }
     if (!spreadsheetId) {
-      setStatus({ type: 'error', message: 'Please enter a Spreadsheet ID.' });
+      setStatus({ type: 'error', message: 'Please enter a Spreadsheet ID (top of page).' });
+      setIsSubmitting(false);
       return;
     }
-
-    setIsSubmitting(true);
-    setStatus({ type: null, message: '' });
+    if (!declarations.accurate || !declarations.offense || !declarations.agreement || !declarations.awareness) {
+      setStatus({ type: 'error', message: 'Please check all declaration boxes below before submitting.' });
+      setIsSubmitting(false);
+      return;
+    }
 
     try {
       const endTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -1234,9 +1242,9 @@ export default function App() {
                       
                       <button
                         type="submit"
-                        disabled={isSubmitting || !isConnected || !spreadsheetId || !declarations.accurate || !declarations.offense || !declarations.agreement || !declarations.awareness}
+                        disabled={isSubmitting}
                         className={`flex items-center gap-2 px-10 py-4 rounded-2xl font-bold transition-all shadow-lg ${
-                          isSubmitting || !isConnected || !spreadsheetId || !declarations.accurate || !declarations.offense || !declarations.agreement || !declarations.awareness
+                          isSubmitting
                             ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
                             : 'bg-blue-600 text-white hover:bg-blue-700 active:scale-95'
                         }`}
