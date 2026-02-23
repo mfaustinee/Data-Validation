@@ -187,10 +187,15 @@ export default function App() {
   const checkAuthStatus = async () => {
     try {
       const res = await fetch('/api/auth/status');
+      if (!res.ok) {
+        const text = await res.text();
+        console.error(`Auth status check failed (${res.status}):`, text);
+        return;
+      }
       const data = await res.json();
       setIsConnected(data.connected);
     } catch (err) {
-      console.error('Failed to check auth status', err);
+      console.error('Failed to check auth status:', err);
     }
   };
 
