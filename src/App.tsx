@@ -120,7 +120,7 @@ const initialData: FormData = {
 
 export default function App() {
   const [formData, setFormData] = useState<FormData>(initialData);
-  const [isConnected, setIsConnected] = useState(false);
+  const [isConnected, setIsConnected] = useState(true); // Default to true for Service Account mode
   const [spreadsheetId, setSpreadsheetId] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [status, setStatus] = useState<{ type: 'success' | 'error' | null; message: string }>({ type: null, message: '' });
@@ -178,74 +178,20 @@ export default function App() {
       try {
         const res = await fetch('/api/health');
         if (res.ok) {
-          console.log('API is healthy');
+          const data = await res.json();
+          console.log('API is healthy', data);
+          setIsConnected(data.configured);
         } else {
           console.log('API health check failed:', res.status);
+          setIsConnected(false);
         }
       } catch (err) {
         console.error('API unreachable:', err);
+        setIsConnected(false);
       }
     };
     verifyApi();
-    checkAuthStatus();
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
-        checkAuthStatus();
-      }
-    };
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
   }, []);
-
-  const checkAuthStatus = async () => {
-    try {
-      const res = await fetch('/api/auth/status');
-      if (!res.ok) {
-        const text = await res.text();
-        console.error(`Auth status check failed (${res.status}):`, text);
-        return;
-      }
-      const data = await res.json();
-      setIsConnected(data.connected);
-    } catch (err) {
-      console.error('Failed to check auth status:', err);
-    }
-  };
-
-  const handleConnect = async () => {
-    setStatus({ type: null, message: '' });
-    try {
-      console.log('Connecting to Google Sheets...');
-      const res = await fetch('/api/gsheets/auth-url');
-      
-      const contentType = res.headers.get("content-type");
-      if (!res.ok) {
-        const text = await res.text();
-        console.error(`Connection failed (${res.status}):`, text);
-        throw new Error(`Server error (${res.status}): ${text.slice(0, 100)}`);
-      }
-
-      if (!contentType || !contentType.includes("application/json")) {
-        const text = await res.text();
-        console.error("Expected JSON but got:", text);
-        throw new Error("Server returned an invalid response format. Please refresh and try again.");
-      }
-
-      const data = await res.json();
-      if (data.url) {
-        console.log('Opening authorization window...');
-        const authWindow = window.open(data.url, 'google_auth', 'width=600,height=700');
-        if (!authWindow) {
-          setStatus({ type: 'error', message: 'Popup blocked! Please allow popups for this site to connect.' });
-        }
-      } else if (data.error) {
-        throw new Error(data.error);
-      }
-    } catch (err: any) {
-      console.error('Connection error:', err);
-      setStatus({ type: 'error', message: err.message || 'Failed to connect. Please check your internet and try again.' });
-    }
-  };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -510,31 +456,21 @@ export default function App() {
               <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
               <div>
                 <p className="text-xs font-semibold">Google Sheets Sync</p>
-                <p className="text-[10px] text-gray-500">{isConnected ? 'Connected and ready' : 'Not connected'}</p>
+                <p className="text-[10px] text-gray-500">{isConnected ? 'Service Account Active' : 'Credentials Missing'}</p>
               </div>
             </div>
             
             <div className="flex flex-col sm:flex-row gap-2">
-              {!isConnected ? (
-                <button
-                  onClick={handleConnect}
-                  className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 transition-colors shadow-sm"
-                >
-                  <LinkIcon className="w-3 h-3" />
-                  Connect Google Sheets
-                </button>
-              ) : (
-                <div className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-lg border border-black/5">
-                  <LinkIcon className="w-3 h-3 text-emerald-600" />
-                  <input
-                    type="text"
-                    placeholder="Enter Spreadsheet ID"
-                    value={spreadsheetId}
-                    onChange={(e) => setSpreadsheetId(e.target.value)}
-                    className="bg-transparent border-none focus:ring-0 text-xs w-full sm:w-48"
-                  />
-                </div>
-              )}
+              <div className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-lg border border-black/5">
+                <LinkIcon className="w-3 h-3 text-emerald-600" />
+                <input
+                  type="text"
+                  placeholder="Enter Spreadsheet ID"
+                  value={spreadsheetId}
+                  onChange={(e) => setSpreadsheetId(e.target.value)}
+                  className="bg-transparent border-none focus:ring-0 text-xs w-full sm:w-48"
+                />
+              </div>
             </div>
           </div>
         </div>
