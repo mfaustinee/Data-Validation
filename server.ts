@@ -1,3 +1,5 @@
+console.log("Server script starting...");
+
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import { google } from "googleapis";
@@ -35,9 +37,16 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '50mb' }));
 app.use(cookieParser());
 
-const CLIENT_ID = process.env.VITE_GOOGLE_CLIENT_ID;
+const CLIENT_ID = process.env.VITE_GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-const REDIRECT_URI = `${process.env.APP_URL}/auth/callback`;
+const APP_URL = process.env.APP_URL || "http://localhost:3000";
+const REDIRECT_URI = `${APP_URL}/auth/callback`;
+
+console.log("OAuth Config Check:");
+console.log("- CLIENT_ID:", CLIENT_ID ? `${CLIENT_ID.slice(0, 10)}...` : "MISSING");
+console.log("- CLIENT_SECRET:", CLIENT_SECRET ? "PRESENT" : "MISSING");
+console.log("- APP_URL:", APP_URL);
+console.log("- REDIRECT_URI:", REDIRECT_URI);
 
 const oauth2Client = new OAuth2Client(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
 

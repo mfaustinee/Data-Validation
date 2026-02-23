@@ -174,6 +174,19 @@ export default function App() {
   const totalPenalty = formData.nonCompliance.reduce((sum, nc) => sum + (parseFloat(nc.amount) || 0), 0);
 
   useEffect(() => {
+    const verifyApi = async () => {
+      try {
+        const res = await fetch('/api/health');
+        if (res.ok) {
+          console.log('API is healthy');
+        } else {
+          console.log('API health check failed:', res.status);
+        }
+      } catch (err) {
+        console.error('API unreachable:', err);
+      }
+    };
+    verifyApi();
     checkAuthStatus();
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
@@ -200,21 +213,36 @@ export default function App() {
   };
 
   const handleConnect = async () => {
+    setStatus({ type: null, message: '' });
     try {
+      console.log('Fetching auth URL...');
       const res = await fetch('/api/auth/url');
-      const data = await res.json();
       
+      const contentType = res.headers.get("content-type");
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to get auth URL');
+        const text = await res.text();
+        console.error(`Auth URL fetch failed (${res.status}):`, text);
+        throw new Error(`Server error (${res.status}): ${text.slice(0, 100)}`);
       }
 
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await res.text();
+        console.error("Expected JSON but got:", text);
+        throw new Error("Server returned non-JSON response. Check console for details.");
+      }
+
+      const data = await res.json();
       if (data.url) {
+        console.log('Opening auth window:', data.url);
         const authWindow = window.open(data.url, 'google_auth', 'width=600,height=700');
         if (!authWindow) {
           setStatus({ type: 'error', message: 'Popup blocked! Please allow popups for this site to connect.' });
         }
+      } else if (data.error) {
+        throw new Error(data.error);
       }
     } catch (err: any) {
+      console.error('handleConnect error:', err);
       setStatus({ type: 'error', message: err.message || 'Failed to connect. Check environment variables.' });
     }
   };
@@ -452,6 +480,28 @@ export default function App() {
           </div>
           <p className="text-[10px] font-medium text-gray-500 uppercase tracking-widest">Data Validation Form</p>
         </header>
+
+        {/* Global Status Message */}
+        <AnimatePresence>
+          {status.message && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="mb-4 overflow-hidden"
+            >
+              <div className={`p-4 rounded-xl flex items-center gap-3 border ${
+                status.type === 'success' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-red-50 text-red-700 border-red-100'
+              }`}>
+                {status.type === 'success' ? <CheckCircle2 className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
+                <p className="text-sm font-medium">{status.message}</p>
+                <button onClick={() => setStatus({ type: null, message: '' })} className="ml-auto text-gray-400 hover:text-gray-600">
+                  &times;
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Connection Status */}
         <div className="mb-4 bg-white rounded-xl p-4 shadow-sm border border-black/5">
@@ -1222,19 +1272,6 @@ export default function App() {
                   </div>
 
                   <div className="flex flex-col gap-4 pt-6">
-                    {status.message && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className={`p-4 rounded-xl flex items-center gap-3 ${
-                          status.type === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-red-50 text-red-700 border border-red-100'
-                        }`}
-                      >
-                        {status.type === 'success' ? <CheckCircle2 className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
-                        <p className="text-sm font-medium">{status.message}</p>
-                      </motion.div>
-                    )}
-
                     <div className="flex justify-between items-center">
                       <div className="flex gap-3">
                         <button
