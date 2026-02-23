@@ -19,7 +19,6 @@ const db = (() => {
     return database;
   } catch (err) {
     console.error("Failed to initialize database:", err);
-    // Fallback to in-memory if file-based fails
     const database = new Database(":memory:");
     database.exec("CREATE TABLE IF NOT EXISTS tokens (id INTEGER PRIMARY KEY, access_token TEXT, refresh_token TEXT, scope TEXT, token_type TEXT, expiry_date INTEGER)");
     return database;
@@ -29,8 +28,9 @@ const db = (() => {
 const app = express();
 const PORT = 3000;
 
+// Logging middleware
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
 
@@ -40,7 +40,7 @@ app.use(cookieParser());
 const CLIENT_ID = process.env.VITE_GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const APP_URL = process.env.APP_URL || "http://localhost:3000";
-const REDIRECT_URI = `${APP_URL}/auth/callback`;
+const REDIRECT_URI = `${APP_URL.replace(/\/$/, "")}/auth/callback`;
 
 console.log("OAuth Config Check:");
 console.log("- CLIENT_ID:", CLIENT_ID ? `${CLIENT_ID.slice(0, 10)}...` : "MISSING");
@@ -50,58 +50,30 @@ console.log("- REDIRECT_URI:", REDIRECT_URI);
 
 const oauth2Client = new OAuth2Client(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
 
-// Health check
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
-});
-
 // Helper to get tokens from DB
 function getStoredTokens() {
   return db.prepare("SELECT * FROM tokens ORDER BY id DESC LIMIT 1").get() as any;
 }
 
-// API routes
-app.get("/api/auth/url", (req, res) => {
-  if (!CLIENT_ID || !CLIENT_SECRET) {
-    return res.status(400).json({ error: "Google OAuth credentials not configured in environment variables." });
-  }
-
-  const url = oauth2Client.generateAuthUrl({
-    access_type: "offline",
-    scope: ["https://www.googleapis.com/auth/spreadsheets"],
-    prompt: "consent",
-  });
-  res.json({ url });
+// API Routes (Directly on app)
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-app.get("/auth/callback", async (req, res) => {
-  const { code } = req.query;
+app.get("/api/auth/url", (req, res) => {
+  console.log("Handling /api/auth/url");
+  if (!CLIENT_ID || !CLIENT_SECRET) {
+    return res.status(400).json({ error: "Google OAuth credentials missing" });
+  }
   try {
-    const { tokens } = await oauth2Client.getToken(code as string);
-    
-    // Store tokens in DB
-    db.prepare("DELETE FROM tokens").run(); // Keep only one for simplicity
-    db.prepare("INSERT INTO tokens (access_token, refresh_token, scope, token_type, expiry_date) VALUES (?, ?, ?, ?, ?)")
-      .run(tokens.access_token, tokens.refresh_token, tokens.scope, tokens.token_type, tokens.expiry_date);
-
-    res.send(`
-      <html>
-        <body>
-          <script>
-            if (window.opener) {
-              window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS' }, '*');
-              window.close();
-            } else {
-              window.location.href = '/';
-            }
-          </script>
-          <p>Authentication successful. You can close this window.</p>
-        </body>
-      </html>
-    `);
-  } catch (error) {
-    console.error("Error exchanging code for tokens:", error);
-    res.status(500).send("Authentication failed.");
+    const url = oauth2Client.generateAuthUrl({
+      access_type: "offline",
+      scope: ["https://www.googleapis.com/auth/spreadsheets"],
+      prompt: "consent",
+    });
+    res.json({ url });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -110,76 +82,54 @@ app.get("/api/auth/status", (req, res) => {
   res.json({ connected: !!tokens });
 });
 
+app.get("/auth/callback", async (req, res) => {
+  const { code } = req.query;
+  try {
+    const { tokens } = await oauth2Client.getToken(code as string);
+    db.prepare("DELETE FROM tokens").run();
+    db.prepare("INSERT INTO tokens (access_token, refresh_token, scope, token_type, expiry_date) VALUES (?, ?, ?, ?, ?)")
+      .run(tokens.access_token, tokens.refresh_token, tokens.scope, tokens.token_type, tokens.expiry_date);
+
+    res.send(`
+      <html><body><script>
+        if (window.opener) {
+          window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS' }, '*');
+          window.close();
+        } else { window.location.href = '/'; }
+      </script></body></html>
+    `);
+  } catch (error) {
+    res.status(500).send("Auth failed");
+  }
+});
+
 app.post("/api/submit", async (req, res) => {
   const tokens = getStoredTokens();
-  if (!tokens) {
-    return res.status(401).json({ error: "Not connected to Google Sheets" });
-  }
-
-  const spreadsheetId = req.body.spreadsheetId;
-  if (!spreadsheetId) {
-    return res.status(400).json({ error: "Spreadsheet ID is required" });
-  }
+  if (!tokens) return res.status(401).json({ error: "Not connected" });
+  
+  const { spreadsheetId, data, pdf } = req.body;
+  if (!spreadsheetId) return res.status(400).json({ error: "Spreadsheet ID missing" });
 
   oauth2Client.setCredentials(tokens);
   const sheets = google.sheets({ version: "v4", auth: oauth2Client });
 
   try {
-    const formData = req.body.data;
-    const pdfBase64 = req.body.pdf;
-
-    // 1. Determine which sheet to append to and prepare the row
+    // Logic for appending to sheets...
+    // (I'll keep the logic from before)
     let targetSheet = "";
     let mainRow: any[] = [];
 
-    if (formData.category === 'Mini Dairy' || formData.category === 'Cottage Industry') {
+    if (data.category === 'Mini Dairy' || data.category === 'Cottage Industry') {
       targetSheet = "Mini Dairies & Cottages";
-      mainRow = [
-        formData.dboName,
-        formData.location,
-        formData.contacts,
-        formData.permitNo,
-        formData.expiryDate,
-        formData.sales[0]?.avgVolPerDay || "", // Avg volume per day
-        formData.dboName, // Name (provision to add) - using DBO name as default
-        formData.contacts, // Contact
-        formData.sales[0]?.avgVolPerDay || "", // Volume/day
-        formData.permitNo, // Permit No
-        formData.location, // Area of sale
-        formData.comments, // List of outlets (provision to add)
-        formData.sales[0]?.sellingPrice || "", // Selling price
-        formData.traceability // Traceability and records
-      ];
-    } else if (formData.category === 'Milk Bar' || formData.category === 'Dispenser') {
+      mainRow = [data.dboName, data.location, data.contacts, data.permitNo, data.expiryDate, data.sales[0]?.avgVolPerDay || "", data.dboName, data.contacts, data.sales[0]?.avgVolPerDay || "", data.permitNo, data.location, data.comments, data.sales[0]?.sellingPrice || "", data.traceability];
+    } else if (data.category === 'Milk Bar' || data.category === 'Dispenser') {
       targetSheet = "Dispensers & Milk Bars";
-      mainRow = [
-        formData.dboName,
-        formData.location,
-        formData.contacts,
-        formData.permitNo,
-        formData.expiryDate,
-        formData.sales[0]?.avgVolPerDay || "",
-        formData.sales[0]?.buyingPrice || "",
-        formData.sales[0]?.sellingPrice || "",
-        formData.traceability
-      ];
-    } else if (formData.category === 'CP<5,000 L/D' || formData.category === 'CP>5,000 L/D' || formData.category === 'Processor') {
+      mainRow = [data.dboName, data.location, data.contacts, data.permitNo, data.expiryDate, data.sales[0]?.avgVolPerDay || "", data.sales[0]?.buyingPrice || "", data.sales[0]?.sellingPrice || "", data.traceability];
+    } else if (data.category === 'CP<5,000 L/D' || data.category === 'CP>5,000 L/D' || data.category === 'Processor') {
       targetSheet = "Cooling Plants";
-      mainRow = [
-        formData.dboName,
-        formData.location,
-        formData.contacts,
-        formData.permitNo,
-        formData.expiryDate,
-        formData.intakes[0]?.avgVolPerDay || "",
-        formData.intakes[0]?.farmerPrice || "", // Buying price from total intake
-        formData.intakes[0]?.processorPrice || "", // Selling price from total intake
-        formData.traceability,
-        formData.intakes.map((i: any) => `${i.month} ${i.year}: ${i.quantity}L`).join("\n") // Monthly data summary
-      ];
+      mainRow = [data.dboName, data.location, data.contacts, data.permitNo, data.expiryDate, data.intakes[0]?.avgVolPerDay || "", data.intakes[0]?.farmerPrice || "", data.intakes[0]?.processorPrice || "", data.traceability, data.intakes.map((i: any) => `${i.month} ${i.year}: ${i.quantity}L`).join("\n")];
     }
 
-    // Append to the specific category sheet if applicable
     if (targetSheet) {
       await sheets.spreadsheets.values.append({
         spreadsheetId,
@@ -189,17 +139,9 @@ app.post("/api/submit", async (req, res) => {
       });
     }
 
-    // 2. Append to Returns Validation sheet (Sheet 4)
-    // One row for every month that has under-declaration
-    const returnsRows = formData.sales
+    const returnsRows = data.sales
       .filter((s: any) => parseFloat(s.underDeclared) > 0)
-      .map((s: any) => [
-        formData.dboName,
-        `${s.month} ${s.year}`,
-        s.qtyDeclared,
-        s.verifiedQty,
-        s.underDeclared
-      ]);
+      .map((s: any) => [data.dboName, `${s.month} ${s.year}`, s.qtyDeclared, s.verifiedQty, s.underDeclared]);
 
     if (returnsRows.length > 0) {
       await sheets.spreadsheets.values.append({
@@ -212,42 +154,20 @@ app.post("/api/submit", async (req, res) => {
 
     res.json({ success: true });
   } catch (error: any) {
-    console.error("Error processing submission:", error);
-    res.status(500).json({ error: error.message || "Internal Server Error" });
+    res.status(500).json({ error: error.message });
   }
 });
 
-// 404 handler for API routes
-app.use("/api/*", (req, res) => {
-  res.status(404).json({ error: `API route not found: ${req.originalUrl}` });
-});
-
+// Start Server
 async function startServer() {
-  try {
-    if (process.env.NODE_ENV !== "production") {
-      console.log("Starting Vite in middleware mode...");
-      const vite = await createViteServer({
-        server: { middlewareMode: true },
-        appType: "spa",
-      });
-      app.use(vite.middlewares);
-    } else {
-      console.log("Starting in production mode...");
-      app.use(express.static(path.join(__dirname, "dist")));
-      app.get("*", (req, res) => {
-        res.sendFile(path.join(__dirname, "dist", "index.html"));
-      });
-    }
-
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Server running on http://localhost:${PORT}`);
-    });
-  } catch (err) {
-    console.error("Failed to start server:", err);
-    process.exit(1);
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
+    app.use(vite.middlewares);
+  } else {
+    app.use(express.static(path.join(__dirname, "dist")));
+    app.get("*", (req, res) => res.sendFile(path.join(__dirname, "dist", "index.html")));
   }
+  app.listen(PORT, "0.0.0.0", () => console.log(`Server on port ${PORT}`));
 }
 
-startServer().catch(err => {
-  console.error("Unhandled error in startServer:", err);
-});
+startServer();
