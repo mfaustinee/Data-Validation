@@ -55,25 +55,32 @@ function getStoredTokens() {
   return db.prepare("SELECT * FROM tokens ORDER BY id DESC LIMIT 1").get() as any;
 }
 
-// API Routes (Directly on app)
+// API Routes
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-app.get("/api/auth/url", (req, res) => {
-  console.log("Handling /api/auth/url");
+app.get("/api/gsheets/connect", (req, res) => {
+  console.log("[SERVER] Received request for /api/gsheets/connect");
+  
   if (!CLIENT_ID || !CLIENT_SECRET) {
-    return res.status(400).json({ error: "Google OAuth credentials missing" });
+    console.error("[SERVER] Missing Google OAuth credentials");
+    return res.status(400).json({ 
+      error: "Google OAuth credentials (CLIENT_ID/SECRET) are missing. Please check your environment variables." 
+    });
   }
+
   try {
     const url = oauth2Client.generateAuthUrl({
       access_type: "offline",
       scope: ["https://www.googleapis.com/auth/spreadsheets"],
       prompt: "consent",
     });
+    console.log("[SERVER] Generated Auth URL successfully");
     res.json({ url });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    console.error("[SERVER] Error generating auth URL:", err);
+    res.status(500).json({ error: `Failed to generate auth URL: ${err.message}` });
   }
 });
 

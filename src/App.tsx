@@ -215,25 +215,25 @@ export default function App() {
   const handleConnect = async () => {
     setStatus({ type: null, message: '' });
     try {
-      console.log('Fetching auth URL...');
-      const res = await fetch('/api/auth/url');
+      console.log('Connecting to Google Sheets...');
+      const res = await fetch('/api/gsheets/connect');
       
       const contentType = res.headers.get("content-type");
       if (!res.ok) {
         const text = await res.text();
-        console.error(`Auth URL fetch failed (${res.status}):`, text);
+        console.error(`Connection failed (${res.status}):`, text);
         throw new Error(`Server error (${res.status}): ${text.slice(0, 100)}`);
       }
 
       if (!contentType || !contentType.includes("application/json")) {
         const text = await res.text();
         console.error("Expected JSON but got:", text);
-        throw new Error("Server returned non-JSON response. Check console for details.");
+        throw new Error("Server returned an invalid response format. Please refresh and try again.");
       }
 
       const data = await res.json();
       if (data.url) {
-        console.log('Opening auth window:', data.url);
+        console.log('Opening authorization window...');
         const authWindow = window.open(data.url, 'google_auth', 'width=600,height=700');
         if (!authWindow) {
           setStatus({ type: 'error', message: 'Popup blocked! Please allow popups for this site to connect.' });
@@ -242,8 +242,8 @@ export default function App() {
         throw new Error(data.error);
       }
     } catch (err: any) {
-      console.error('handleConnect error:', err);
-      setStatus({ type: 'error', message: err.message || 'Failed to connect. Check environment variables.' });
+      console.error('Connection error:', err);
+      setStatus({ type: 'error', message: err.message || 'Failed to connect. Please check your internet and try again.' });
     }
   };
 
