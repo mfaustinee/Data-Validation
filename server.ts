@@ -5,8 +5,6 @@ import { OAuth2Client } from "google-auth-library";
 import cookieParser from "cookie-parser";
 import path from "path";
 import Database from "better-sqlite3";
-import { jsPDF } from "jspdf";
-import "jspdf-autotable";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -104,7 +102,7 @@ app.post("/api/submit", async (req, res) => {
     let targetSheet = "";
     let mainRow: any[] = [];
 
-    if (formData.category === 'Mini Dairy' || formData.category === 'Cottage industry') {
+    if (formData.category === 'Mini Dairy' || formData.category === 'Cottage Industry') {
       targetSheet = "Mini Dairies & Cottages";
       mainRow = [
         formData.dboName,
