@@ -216,7 +216,7 @@ export default function App() {
     setStatus({ type: null, message: '' });
     try {
       console.log('Connecting to Google Sheets...');
-      const res = await fetch('/api/gsheets/connect');
+      const res = await fetch('/api/gsheets/auth-url');
       
       const contentType = res.headers.get("content-type");
       if (!res.ok) {

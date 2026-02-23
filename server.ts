@@ -60,8 +60,19 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-app.get("/api/gsheets/connect", (req, res) => {
-  console.log("[SERVER] Received request for /api/gsheets/connect");
+app.get("/api/debug/env", (req, res) => {
+  res.json({
+    APP_URL: process.env.APP_URL,
+    NODE_ENV: process.env.NODE_ENV,
+    HAS_CLIENT_ID: !!CLIENT_ID,
+    HAS_CLIENT_SECRET: !!CLIENT_SECRET,
+    REDIRECT_URI: REDIRECT_URI,
+    PORT: PORT
+  });
+});
+
+app.get("/api/gsheets/auth-url", (req, res) => {
+  console.log(`[${new Date().toISOString()}] Handling /api/gsheets/auth-url`);
   
   if (!CLIENT_ID || !CLIENT_SECRET) {
     console.error("[SERVER] Missing Google OAuth credentials");
@@ -165,16 +176,39 @@ app.post("/api/submit", async (req, res) => {
   }
 });
 
+// 404 handler for API
+app.use("/api/*", (req, res) => {
+  console.log(`[404 API] ${req.method} ${req.url}`);
+  res.status(404).json({ error: "API route not found", path: req.url });
+});
+
 // Start Server
 async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
-    app.use(vite.middlewares);
-  } else {
-    app.use(express.static(path.join(__dirname, "dist")));
-    app.get("*", (req, res) => res.sendFile(path.join(__dirname, "dist", "index.html")));
+  try {
+    if (process.env.NODE_ENV !== "production") {
+      console.log("Starting Vite in middleware mode...");
+      const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
+      app.use(vite.middlewares);
+    } else {
+      console.log("Starting in production mode...");
+      app.use(express.static(path.join(__dirname, "dist")));
+      app.get("*", (req, res) => res.sendFile(path.join(__dirname, "dist", "index.html")));
+    }
+    
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`[${new Date().toISOString()}] Server running on http://0.0.0.0:${PORT}`);
+    });
+  } catch (err) {
+    console.error("Failed to start server:", err);
   }
-  app.listen(PORT, "0.0.0.0", () => console.log(`Server on port ${PORT}`));
 }
+
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
 
 startServer();
