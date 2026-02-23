@@ -64,6 +64,7 @@ interface FormData {
   contacts: string;
   validationPeriod: string;
   location: string;
+  county: string;
   // Table Data (Now part of sales)
   traceability: string;
   natureOfProduce: string;
@@ -94,6 +95,7 @@ const initialData: FormData = {
   contacts: '',
   validationPeriod: '',
   location: '',
+  county: 'KERICHO',
   traceability: 'YES',
   natureOfProduce: '',
   source: '',
@@ -142,37 +144,32 @@ export default function App() {
       return { ...sale, underDeclared: diff.toString() };
     });
 
-    // Check if we need to update to avoid infinite loop
-    const hasChanged = JSON.stringify(updatedSales) !== JSON.stringify(formData.sales);
-    if (hasChanged) {
-      setFormData(prev => ({ ...prev, sales: updatedSales }));
-    }
-
     // Auto populate non-compliance based on under-declaration
     const newNonCompliance = updatedSales
       .filter(sale => parseFloat(sale.underDeclared) > 0 && sale.month.trim() !== '')
       .map(sale => {
-        const litres = parseFloat(sale.underDeclared);
-        const buyingPrice = parseFloat(sale.buyingPrice) || 0;
-        const amount = litres * (buyingPrice / 100) * 1.25;
-        
         const displayMonth = `${sale.month} ${sale.year}`;
-        
         // Find existing entry to preserve paymentMonthYear and mpesaRef
         const existing = formData.nonCompliance.find(nc => nc.month === displayMonth);
         
         return {
           month: displayMonth,
           litres: sale.underDeclared,
-          amount: amount.toFixed(2),
+          amount: (parseFloat(sale.underDeclared) * (parseFloat(sale.buyingPrice) || 0) / 100 * 1.25).toFixed(2),
           paymentMonthYear: existing?.paymentMonthYear || '',
           mpesaRef: existing?.mpesaRef || ''
         };
       });
 
+    const salesChanged = JSON.stringify(updatedSales) !== JSON.stringify(formData.sales);
     const ncChanged = JSON.stringify(newNonCompliance) !== JSON.stringify(formData.nonCompliance);
-    if (ncChanged) {
-      setFormData(prev => ({ ...prev, nonCompliance: newNonCompliance }));
+
+    if (salesChanged || ncChanged) {
+      setFormData(prev => ({ 
+        ...prev, 
+        sales: updatedSales,
+        nonCompliance: newNonCompliance 
+      }));
     }
   }, [formData.sales]);
 
@@ -236,29 +233,30 @@ export default function App() {
     doc.text(`Premise Name: ${formData.premiseName}`, 20, 65);
     doc.text(`Email: ${formData.email}`, 20, 70);
     doc.text(`Contacts: ${formData.contacts}`, 20, 75);
+    doc.text(`County: ${formData.county}`, 110, 75);
     doc.text(`Location: ${formData.location}`, 20, 80);
 
     let currentY = 90;
 
     // Intakes Table
     if (formData.category === 'CP>5,000 L/D' || formData.category === 'CP<5,000 L/D' || formData.category === 'Processor') {
-      doc.setFontSize(12);
+      doc.setFontSize(11);
       doc.text("Total Monthly Intakes", 20, currentY);
       autoTable(doc, {
         startY: currentY + 5,
-        head: [['Month', 'Year', 'Qty', 'Farmer Price', 'Processor', 'Proc. Price', 'Avg Vol/Day']],
-        body: formData.intakes.map(i => [i.month, i.year, i.quantity, i.farmerPrice, i.processor, i.processorPrice, i.avgVolPerDay]),
-        styles: { fontSize: 8 }
+        head: [['Month/Year', 'Qty', 'Farmer Price', 'Processor', 'Proc. Price', 'Avg Vol/Day']],
+        body: formData.intakes.map(i => [`${i.month} ${i.year}`, i.quantity, i.farmerPrice, i.processor, i.processorPrice, i.avgVolPerDay]),
+        styles: { fontSize: 7 }
       });
       currentY = (doc as any).lastAutoTable.finalY + 10;
     }
 
     // Sales Table
-    doc.setFontSize(12);
+    doc.setFontSize(11);
     doc.text("Local Sales Data", 20, currentY);
     formData.sales.forEach((sale, idx) => {
-      doc.setFontSize(10);
-      doc.text(`Month: ${sale.month} ${sale.year}`, 20, currentY + 7);
+      doc.setFontSize(9);
+      doc.text(`Period: ${sale.month} ${sale.year}`, 20, currentY + 7);
       autoTable(doc, {
         startY: currentY + 10,
         head: [['Detail', 'Unit', 'Value']],
@@ -272,15 +270,13 @@ export default function App() {
           ['Avg Volume/Day', 'Litres', sale.avgVolPerDay],
         ],
         margin: { left: 25 },
-        styles: { fontSize: 8 }
+        styles: { fontSize: 7 }
       });
       currentY = (doc as any).lastAutoTable.finalY + 5;
     });
     currentY += 5;
 
-    // Summary Table
-    doc.setFontSize(12);
-    doc.text("Validation Summary", 20, currentY);
+    // Summary Data
     autoTable(doc, {
       startY: currentY + 5,
       head: [['Detail', 'Value']],
@@ -289,20 +285,21 @@ export default function App() {
         ['Nature of Produce', formData.natureOfProduce],
         ['Source', formData.source],
       ],
+      styles: { fontSize: 7 }
     });
     currentY = (doc as any).lastAutoTable.finalY + 10;
 
     // Compliance Section
-    doc.setFontSize(12);
+    doc.setFontSize(11);
     doc.text("Compliance Commitment", 20, currentY);
     autoTable(doc, {
       startY: currentY + 5,
-      head: [['CSL Period', 'Litres', 'Amount (Kshs)', 'Month/Year to Pay', 'MPESA REF']],
+      head: [['CSL Period (Month/Year)', 'Litres', 'Amount (Kshs)', 'Month/Year to Pay', 'MPESA REF']],
       body: [
         ...formData.nonCompliance.map(nc => [nc.month, nc.litres, nc.amount, nc.paymentMonthYear, nc.mpesaRef]),
         [{ content: 'TOTAL', styles: { fontStyle: 'bold' } }, '', { content: totalPenalty.toFixed(2), styles: { fontStyle: 'bold' } }, '', '']
       ],
-      styles: { fontSize: 8 }
+      styles: { fontSize: 7 }
     });
     currentY = (doc as any).lastAutoTable.finalY + 10;
 
@@ -416,63 +413,57 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f5f5f4] text-[#1a1a1a] font-sans p-4 md:p-8">
+    <div className="min-h-screen bg-[#f5f5f4] text-[#1a1a1a] font-sans p-2 md:p-4">
       <div className="max-w-4xl mx-auto">
         {/* Header */}
-        <header className="mb-8 text-center">
-          <div className="flex justify-center mb-4">
-            <div className="bg-white p-4 rounded-2xl shadow-sm border border-black/5 flex items-center gap-3">
-              <Database className="w-8 h-8 text-blue-600" />
-              <h1 className="text-2xl font-bold tracking-tight uppercase">Kenya Dairy Board</h1>
+        <header className="mb-4 text-center">
+          <div className="flex justify-center mb-2">
+            <div className="bg-white p-2 md:p-3 rounded-xl shadow-sm border border-black/5 flex items-center gap-2">
+              <Database className="w-6 h-6 text-blue-600" />
+              <h1 className="text-xl font-bold tracking-tight uppercase">Kenya Dairy Board</h1>
             </div>
           </div>
-          <p className="text-sm font-medium text-gray-500 uppercase tracking-widest">Data Validation Form</p>
+          <p className="text-[10px] font-medium text-gray-500 uppercase tracking-widest">Data Validation Form</p>
         </header>
 
         {/* Connection Status */}
-        <div className="mb-8 bg-white rounded-2xl p-6 shadow-sm border border-black/5">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+        <div className="mb-4 bg-white rounded-xl p-4 shadow-sm border border-black/5">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
               <div>
-                <p className="text-sm font-semibold">Google Sheets Sync</p>
-                <p className="text-xs text-gray-500">{isConnected ? 'Connected and ready' : 'Not connected'}</p>
+                <p className="text-xs font-semibold">Google Sheets Sync</p>
+                <p className="text-[10px] text-gray-500">{isConnected ? 'Connected and ready' : 'Not connected'}</p>
               </div>
             </div>
             
-            <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex flex-col sm:flex-row gap-2">
               {!isConnected ? (
                 <button
                   onClick={handleConnect}
-                  className="flex items-center justify-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 transition-colors shadow-sm"
+                  className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 transition-colors shadow-sm"
                 >
-                  <LinkIcon className="w-4 h-4" />
+                  <LinkIcon className="w-3 h-3" />
                   Connect Google Sheets
                 </button>
               ) : (
-                <div className="flex items-center gap-2 bg-gray-50 px-4 py-2 rounded-xl border border-black/5">
-                  <LinkIcon className="w-4 h-4 text-emerald-600" />
+                <div className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-lg border border-black/5">
+                  <LinkIcon className="w-3 h-3 text-emerald-600" />
                   <input
                     type="text"
                     placeholder="Enter Spreadsheet ID"
                     value={spreadsheetId}
                     onChange={(e) => setSpreadsheetId(e.target.value)}
-                    className="bg-transparent border-none focus:ring-0 text-sm w-full sm:w-64"
+                    className="bg-transparent border-none focus:ring-0 text-xs w-full sm:w-48"
                   />
                 </div>
               )}
             </div>
           </div>
-          
-          {isConnected && (
-            <p className="mt-3 text-[10px] text-gray-400 uppercase tracking-wider">
-              Tip: You can find the Spreadsheet ID in the URL of your Google Sheet.
-            </p>
-          )}
         </div>
 
         {/* Form Container */}
-        <div className="bg-white rounded-3xl shadow-xl border border-black/5 overflow-hidden">
+        <div className="bg-white rounded-2xl shadow-lg border border-black/5 overflow-hidden">
           {/* Progress Bar */}
           <div className="h-1.5 w-full bg-gray-100">
             <motion.div 
@@ -610,22 +601,22 @@ export default function App() {
 
                   <div className="space-y-3">
                     <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Category</label>
-                    <div className="flex flex-wrap gap-2">
-                      {categories.map(cat => (
-                        <button
-                          key={cat}
-                          type="button"
-                          onClick={() => setFormData(prev => ({ ...prev, category: cat }))}
-                          className={`px-4 py-2 rounded-lg text-sm font-bold border transition-all ${
-                            formData.category === cat 
-                              ? 'bg-blue-600 border-blue-600 text-white shadow-md' 
-                              : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'
-                          }`}
-                        >
-                          {cat}
-                        </button>
-                      ))}
-                    </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {categories.map(cat => (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, category: cat }))}
+                        className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-all ${
+                          formData.category === cat 
+                            ? 'bg-blue-600 border-blue-600 text-white shadow-md' 
+                            : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -650,13 +641,23 @@ export default function App() {
                       />
                     </div>
                     <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">County</label>
+                      <input
+                        type="text"
+                        name="county"
+                        value={formData.county}
+                        onChange={handleChange}
+                        className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-xs"
+                      />
+                    </div>
+                    <div className="space-y-2">
                       <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Location</label>
                       <input
                         type="text"
                         name="location"
                         value={formData.location}
                         onChange={handleChange}
-                        className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-sm"
+                        className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-xs"
                       />
                     </div>
                   </div>
@@ -714,7 +715,7 @@ export default function App() {
                           )}
                           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                             <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-gray-400 uppercase">Month</label>
+                              <label className="text-[9px] font-bold text-gray-400 uppercase">Month</label>
                               <select
                                 value={intake.month}
                                 onChange={(e) => {
@@ -722,13 +723,13 @@ export default function App() {
                                   newIntakes[idx].month = e.target.value;
                                   setFormData(prev => ({ ...prev, intakes: newIntakes }));
                                 }}
-                                className="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none text-sm bg-white"
+                                className="w-full px-3 py-1.5 rounded-lg border border-gray-200 outline-none text-[11px] bg-white"
                               >
                                 {months.map(m => <option key={m} value={m}>{m}</option>)}
                               </select>
                             </div>
                             <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-gray-400 uppercase">Year</label>
+                              <label className="text-[9px] font-bold text-gray-400 uppercase">Year</label>
                               <select
                                 value={intake.year}
                                 onChange={(e) => {
@@ -736,13 +737,13 @@ export default function App() {
                                   newIntakes[idx].year = e.target.value;
                                   setFormData(prev => ({ ...prev, intakes: newIntakes }));
                                 }}
-                                className="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none text-sm bg-white"
+                                className="w-full px-3 py-1.5 rounded-lg border border-gray-200 outline-none text-[11px] bg-white"
                               >
                                 {years.map(y => <option key={y} value={y}>{y}</option>)}
                               </select>
                             </div>
                             <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-gray-400 uppercase">Quantity (Litres)</label>
+                              <label className="text-[9px] font-bold text-gray-400 uppercase">Quantity (Litres)</label>
                               <input
                                 placeholder="0.00"
                                 value={intake.quantity}
@@ -751,11 +752,11 @@ export default function App() {
                                   newIntakes[idx].quantity = e.target.value;
                                   setFormData(prev => ({ ...prev, intakes: newIntakes }));
                                 }}
-                                className="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none text-sm"
+                                className="w-full px-3 py-1.5 rounded-lg border border-gray-200 outline-none text-[11px]"
                               />
                             </div>
                             <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-gray-400 uppercase">Farmer Price (Kshs)</label>
+                              <label className="text-[9px] font-bold text-gray-400 uppercase">Farmer Price (Kshs)</label>
                               <input
                                 placeholder="0.00"
                                 value={intake.farmerPrice}
@@ -764,11 +765,11 @@ export default function App() {
                                   newIntakes[idx].farmerPrice = e.target.value;
                                   setFormData(prev => ({ ...prev, intakes: newIntakes }));
                                 }}
-                                className="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none text-sm"
+                                className="w-full px-3 py-1.5 rounded-lg border border-gray-200 outline-none text-[11px]"
                               />
                             </div>
                             <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-gray-400 uppercase">Processor</label>
+                              <label className="text-[9px] font-bold text-gray-400 uppercase">Processor</label>
                               <input
                                 placeholder="Name"
                                 value={intake.processor}
@@ -777,11 +778,11 @@ export default function App() {
                                   newIntakes[idx].processor = e.target.value;
                                   setFormData(prev => ({ ...prev, intakes: newIntakes }));
                                 }}
-                                className="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none text-sm"
+                                className="w-full px-3 py-1.5 rounded-lg border border-gray-200 outline-none text-[11px]"
                               />
                             </div>
                             <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-gray-400 uppercase">Processor Price (Kshs)</label>
+                              <label className="text-[9px] font-bold text-gray-400 uppercase">Processor Price (Kshs)</label>
                               <input
                                 placeholder="0.00"
                                 value={intake.processorPrice}
@@ -790,11 +791,11 @@ export default function App() {
                                   newIntakes[idx].processorPrice = e.target.value;
                                   setFormData(prev => ({ ...prev, intakes: newIntakes }));
                                 }}
-                                className="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none text-sm"
+                                className="w-full px-3 py-1.5 rounded-lg border border-gray-200 outline-none text-[11px]"
                               />
                             </div>
                             <div className="space-y-1">
-                              <label className="text-[10px] font-bold text-gray-400 uppercase">Avg Vol/Day (Litres)</label>
+                              <label className="text-[9px] font-bold text-gray-400 uppercase">Avg Vol/Day (Litres)</label>
                               <input
                                 placeholder="0.00"
                                 value={intake.avgVolPerDay}
@@ -803,7 +804,7 @@ export default function App() {
                                   newIntakes[idx].avgVolPerDay = e.target.value;
                                   setFormData(prev => ({ ...prev, intakes: newIntakes }));
                                 }}
-                                className="w-full px-4 py-2 rounded-lg border border-gray-200 outline-none text-sm"
+                                className="w-full px-3 py-1.5 rounded-lg border border-gray-200 outline-none text-[11px]"
                               />
                             </div>
                           </div>
@@ -846,9 +847,9 @@ export default function App() {
                           </button>
                         )}
                         
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Month</label>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Month</label>
                             <select
                               value={sale.month}
                               onChange={(e) => {
@@ -856,13 +857,13 @@ export default function App() {
                                 newSales[idx].month = e.target.value;
                                 setFormData(prev => ({ ...prev, sales: newSales }));
                               }}
-                              className="w-full px-4 py-2 rounded-xl border border-blue-100 focus:border-blue-500 outline-none text-sm font-bold text-blue-600 appearance-none bg-white"
+                              className="w-full px-3 py-1.5 rounded-xl border border-blue-100 focus:border-blue-500 outline-none text-[11px] font-bold text-blue-600 appearance-none bg-white"
                             >
                               {months.map(m => <option key={m} value={m}>{m}</option>)}
                             </select>
                           </div>
-                          <div className="space-y-2">
-                            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Year</label>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Year</label>
                             <select
                               value={sale.year}
                               onChange={(e) => {
@@ -870,7 +871,7 @@ export default function App() {
                                 newSales[idx].year = e.target.value;
                                 setFormData(prev => ({ ...prev, sales: newSales }));
                               }}
-                              className="w-full px-4 py-2 rounded-xl border border-blue-100 focus:border-blue-500 outline-none text-sm font-bold text-blue-600 appearance-none bg-white"
+                              className="w-full px-3 py-1.5 rounded-xl border border-blue-100 focus:border-blue-500 outline-none text-[11px] font-bold text-blue-600 appearance-none bg-white"
                             >
                               {years.map(y => <option key={y} value={y}>{y}</option>)}
                             </select>
