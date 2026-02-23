@@ -6,25 +6,14 @@ import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import cookieParser from "cookie-parser";
 import path from "path";
-import Database from "better-sqlite3";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const db = (() => {
-  try {
-    const dbPath = process.env.VERCEL ? path.join("/tmp", "auth.db") : "auth.db";
-    const database = new Database(dbPath);
-    database.exec("CREATE TABLE IF NOT EXISTS tokens (id INTEGER PRIMARY KEY, access_token TEXT, refresh_token TEXT, scope TEXT, token_type TEXT, expiry_date INTEGER)");
-    return database;
-  } catch (err) {
-    console.error("Failed to initialize database:", err);
-    const database = new Database(":memory:");
-    database.exec("CREATE TABLE IF NOT EXISTS tokens (id INTEGER PRIMARY KEY, access_token TEXT, refresh_token TEXT, scope TEXT, token_type TEXT, expiry_date INTEGER)");
-    return database;
-  }
-})();
+// Simple In-Memory Token Store for Vercel compatibility
+// Note: In production, use a real database like Redis or PostgreSQL
+let memoryToken: any = null;
 
 const app = express();
 const PORT = 3000;
@@ -51,63 +40,46 @@ console.log("- REDIRECT_URI:", REDIRECT_URI);
 
 const oauth2Client = new OAuth2Client(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
 
-// Helper to get tokens from DB
-function getStoredTokens() {
-  return db.prepare("SELECT * FROM tokens ORDER BY id DESC LIMIT 1").get() as any;
-}
-
 // API Routes
 app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+  res.json({ status: "ok", timestamp: new Date().toISOString(), vercel: !!process.env.VERCEL });
 });
 
 app.get("/api/debug/env", (req, res) => {
   res.json({
-    APP_URL: process.env.APP_URL,
-    NODE_ENV: process.env.NODE_ENV,
     HAS_CLIENT_ID: !!CLIENT_ID,
     HAS_CLIENT_SECRET: !!CLIENT_SECRET,
     REDIRECT_URI: REDIRECT_URI,
-    PORT: PORT
+    NODE_ENV: process.env.NODE_ENV,
+    VERCEL: !!process.env.VERCEL
   });
 });
 
 app.get("/api/gsheets/auth-url", (req, res) => {
-  console.log(`[${new Date().toISOString()}] Handling /api/gsheets/auth-url`);
-  
   if (!CLIENT_ID || !CLIENT_SECRET) {
-    console.error("[SERVER] Missing Google OAuth credentials");
-    return res.status(400).json({ 
-      error: "Google OAuth credentials (CLIENT_ID/SECRET) are missing. Please check your environment variables." 
-    });
+    return res.status(400).json({ error: "Google OAuth credentials missing" });
   }
-
   try {
     const url = oauth2Client.generateAuthUrl({
       access_type: "offline",
       scope: ["https://www.googleapis.com/auth/spreadsheets"],
       prompt: "consent",
     });
-    console.log("[SERVER] Generated Auth URL successfully");
     res.json({ url });
   } catch (err: any) {
-    console.error("[SERVER] Error generating auth URL:", err);
-    res.status(500).json({ error: `Failed to generate auth URL: ${err.message}` });
+    res.status(500).json({ error: err.message });
   }
 });
 
 app.get("/api/auth/status", (req, res) => {
-  const tokens = getStoredTokens();
-  res.json({ connected: !!tokens });
+  res.json({ connected: !!memoryToken });
 });
 
 app.get("/auth/callback", async (req, res) => {
   const { code } = req.query;
   try {
     const { tokens } = await oauth2Client.getToken(code as string);
-    db.prepare("DELETE FROM tokens").run();
-    db.prepare("INSERT INTO tokens (access_token, refresh_token, scope, token_type, expiry_date) VALUES (?, ?, ?, ?, ?)")
-      .run(tokens.access_token, tokens.refresh_token, tokens.scope, tokens.token_type, tokens.expiry_date);
+    memoryToken = tokens; // Store in memory
 
     res.send(`
       <html><body><script>
@@ -117,24 +89,22 @@ app.get("/auth/callback", async (req, res) => {
         } else { window.location.href = '/'; }
       </script></body></html>
     `);
-  } catch (error) {
-    res.status(500).send("Auth failed");
+  } catch (error: any) {
+    console.error("Auth callback error:", error);
+    res.status(500).send(`Auth failed: ${error.message}`);
   }
 });
 
 app.post("/api/submit", async (req, res) => {
-  const tokens = getStoredTokens();
-  if (!tokens) return res.status(401).json({ error: "Not connected" });
+  if (!memoryToken) return res.status(401).json({ error: "Not connected to Google Sheets" });
   
-  const { spreadsheetId, data, pdf } = req.body;
+  const { spreadsheetId, data } = req.body;
   if (!spreadsheetId) return res.status(400).json({ error: "Spreadsheet ID missing" });
 
-  oauth2Client.setCredentials(tokens);
+  oauth2Client.setCredentials(memoryToken);
   const sheets = google.sheets({ version: "v4", auth: oauth2Client });
 
   try {
-    // Logic for appending to sheets...
-    // (I'll keep the logic from before)
     let targetSheet = "";
     let mainRow: any[] = [];
 
@@ -173,20 +143,20 @@ app.post("/api/submit", async (req, res) => {
 
     res.json({ success: true });
   } catch (error: any) {
+    console.error("Submit error:", error);
     res.status(500).json({ error: error.message });
   }
 });
 
 // 404 handler for API
 app.use("/api/*", (req, res) => {
-  console.log(`[404 API] ${req.method} ${req.url}`);
   res.status(404).json({ error: "API route not found", path: req.url });
 });
 
 // Start Server
 async function startServer() {
   try {
-    if (process.env.NODE_ENV !== "production") {
+    if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
       console.log("Starting Vite in middleware mode...");
       const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
       app.use(vite.middlewares);
@@ -196,21 +166,16 @@ async function startServer() {
       app.get("*", (req, res) => res.sendFile(path.join(__dirname, "dist", "index.html")));
     }
     
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`[${new Date().toISOString()}] Server running on http://0.0.0.0:${PORT}`);
-    });
+    // Only listen if not in a serverless environment
+    if (!process.env.VERCEL) {
+      app.listen(PORT, "0.0.0.0", () => {
+        console.log(`[${new Date().toISOString()}] Server running on http://0.0.0.0:${PORT}`);
+      });
+    }
   } catch (err) {
     console.error("Failed to start server:", err);
   }
 }
-
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-});
 
 startServer();
 
