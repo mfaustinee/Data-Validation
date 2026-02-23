@@ -5,7 +5,6 @@ import { OAuth2Client } from "google-auth-library";
 import cookieParser from "cookie-parser";
 import path from "path";
 import Database from "better-sqlite3";
-import nodemailer from "nodemailer";
 import { jsPDF } from "jspdf";
 import "jspdf-autotable";
 import { fileURLToPath } from "url";
@@ -27,17 +26,6 @@ const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const REDIRECT_URI = `${process.env.APP_URL}/auth/callback`;
 
 const oauth2Client = new OAuth2Client(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
-
-// Nodemailer transporter
-const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
-  port: parseInt(process.env.EMAIL_PORT || "465"),
-  secure: true,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
 
 // Helper to get tokens from DB
 function getStoredTokens() {
@@ -192,25 +180,6 @@ app.post("/api/submit", async (req, res) => {
         valueInputOption: "USER_ENTERED",
         requestBody: { values: returnsRows },
       });
-    }
-
-    // Send Email with PDF attachment
-    if (formData.email && pdfBase64) {
-      const mailOptions = {
-        from: process.env.EMAIL_USER,
-        to: formData.email,
-        subject: "Kenya Dairy Board - Data Validation Form Submission",
-        text: `Dear ${formData.confirmationName},\n\nPlease find attached a copy of your submitted Data Validation Form.\n\nRegards,\nKenya Dairy Board`,
-        attachments: [
-          {
-            filename: `KDB_Validation_${formData.date}.pdf`,
-            content: pdfBase64.split("base64,")[1],
-            encoding: "base64",
-          },
-        ],
-      };
-
-      await transporter.sendMail(mailOptions);
     }
 
     res.json({ success: true });

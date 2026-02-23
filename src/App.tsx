@@ -59,7 +59,6 @@ interface FormData {
   expiryDate: string;
   dboName: string;
   premiseName: string;
-  email: string;
   category: string;
   contacts: string;
   validationPeriod: string;
@@ -90,7 +89,6 @@ const initialData: FormData = {
   expiryDate: '',
   dboName: '',
   premiseName: '',
-  email: '',
   category: '',
   contacts: '',
   validationPeriod: '',
@@ -231,7 +229,6 @@ export default function App() {
     
     doc.text(`DBO Name: ${formData.dboName}`, 20, 60);
     doc.text(`Premise Name: ${formData.premiseName}`, 20, 65);
-    doc.text(`Email: ${formData.email}`, 20, 70);
     doc.text(`Contacts: ${formData.contacts}`, 20, 75);
     doc.text(`County: ${formData.county}`, 110, 75);
     doc.text(`Location: ${formData.location}`, 20, 80);
@@ -375,7 +372,14 @@ export default function App() {
       });
 
       if (res.ok) {
-        setStatus({ type: 'success', message: 'Data successfully synced and email sent!' });
+        setStatus({ type: 'success', message: 'Data successfully synced! Your PDF is downloading...' });
+        
+        // Trigger PDF Download
+        const link = document.createElement('a');
+        link.href = pdf;
+        link.download = `KDB_Validation_${formData.dboName}_${formData.date}.pdf`;
+        link.click();
+
         setFormData(initialData);
         setStep(0); // Go back to start
       } else {
@@ -582,17 +586,6 @@ export default function App() {
                         type="text"
                         name="premiseName"
                         value={formData.premiseName}
-                        onChange={handleChange}
-                        className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-sm"
-                      />
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Client Email (for copy)</label>
-                      <input
-                        type="email"
-                        name="email"
-                        placeholder="client@example.com"
-                        value={formData.email}
                         onChange={handleChange}
                         className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-sm"
                       />
@@ -1251,7 +1244,7 @@ export default function App() {
                         {isSubmitting ? (
                           <>
                             <Loader2 className="w-5 h-5 animate-spin" />
-                            Syncing & Sending Email...
+                            Syncing & Generating PDF...
                           </>
                         ) : (
                           <>
