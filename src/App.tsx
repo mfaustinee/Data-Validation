@@ -202,34 +202,34 @@ export default function App() {
     setStep(1);
   };
 
-  const generatePDF = async () => {
+  const generatePDF = async (data: FormData = formData) => {
     const doc = new jsPDF();
     
     doc.setFontSize(18);
     doc.text("Kenya Dairy Board - Data Validation Form", 105, 20, { align: "center" });
     
     doc.setFontSize(10);
-    doc.text(`Branch: ${formData.branch}`, 20, 35);
-    doc.text(`Date: ${formData.date}`, 20, 40);
-    doc.text(`Start Time: ${formData.startTime}`, 20, 45);
-    doc.text(`End Time: ${formData.endTime}`, 20, 50);
+    doc.text(`Branch: ${data.branch}`, 20, 35);
+    doc.text(`Date: ${data.date}`, 20, 40);
+    doc.text(`Start Time: ${data.startTime}`, 20, 45);
+    doc.text(`End Time: ${data.endTime}`, 20, 50);
     
-    doc.text(`DBO Name: ${formData.dboName}`, 20, 60);
-    doc.text(`Premise Name: ${formData.premiseName}`, 20, 65);
-    doc.text(`Contacts: ${formData.contacts}`, 20, 75);
-    doc.text(`County: ${formData.county}`, 110, 75);
-    doc.text(`Location: ${formData.location}`, 20, 80);
+    doc.text(`DBO Name: ${data.dboName}`, 20, 60);
+    doc.text(`Premise Name: ${data.premiseName}`, 20, 65);
+    doc.text(`Contacts: ${data.contacts}`, 20, 75);
+    doc.text(`County: ${data.county}`, 110, 75);
+    doc.text(`Location: ${data.location}`, 20, 80);
 
     let currentY = 90;
 
     // Intakes Table
-    if (formData.category === 'CP>5,000 L/D' || formData.category === 'CP<5,000 L/D' || formData.category === 'Processor') {
+    if (data.category === 'CP>5,000 L/D' || data.category === 'CP<5,000 L/D' || data.category === 'Processor') {
       doc.setFontSize(11);
       doc.text("Total Monthly Intakes", 20, currentY);
       autoTable(doc, {
         startY: currentY + 5,
         head: [['Month/Year', 'Qty', 'Farmer Price', 'Processor', 'Proc. Price', 'Avg Vol/Day']],
-        body: formData.intakes.map(i => [`${i.month} ${i.year}`, i.quantity, i.farmerPrice, i.processor, i.processorPrice, i.avgVolPerDay]),
+        body: data.intakes.map(i => [`${i.month} ${i.year}`, i.quantity, i.farmerPrice, i.processor, i.processorPrice, i.avgVolPerDay]),
         styles: { fontSize: 7 }
       });
       currentY = (doc as any).lastAutoTable.finalY + 10;
@@ -238,7 +238,7 @@ export default function App() {
     // Sales Table
     doc.setFontSize(11);
     doc.text("Local Sales Data", 20, currentY);
-    formData.sales.forEach((sale, idx) => {
+    data.sales.forEach((sale, idx) => {
       doc.setFontSize(9);
       doc.text(`Period: ${sale.month} ${sale.year}`, 20, currentY + 7);
       autoTable(doc, {
@@ -265,9 +265,9 @@ export default function App() {
       startY: currentY + 5,
       head: [['Detail', 'Value']],
       body: [
-        ['Traceability', formData.traceability],
-        ['Nature of Produce', formData.natureOfProduce],
-        ['Source', formData.source],
+        ['Traceability', data.traceability],
+        ['Nature of Produce', data.natureOfProduce],
+        ['Source', data.source],
       ],
       styles: { fontSize: 7 }
     });
@@ -280,17 +280,17 @@ export default function App() {
       startY: currentY + 5,
       head: [['CSL Period (Month/Year)', 'Litres', 'Amount (Kshs)', 'Month/Year to Pay', 'MPESA REF']],
       body: [
-        ...formData.nonCompliance.map(nc => [nc.month, nc.litres, nc.amount, nc.paymentMonthYear, nc.mpesaRef]),
+        ...data.nonCompliance.map(nc => [nc.month, nc.litres, nc.amount, nc.paymentMonthYear, nc.mpesaRef]),
         [{ content: 'TOTAL', styles: { fontStyle: 'bold' } }, '', { content: totalPenalty.toFixed(2), styles: { fontStyle: 'bold' } }, '', '']
       ],
       styles: { fontSize: 7 }
     });
     currentY = (doc as any).lastAutoTable.finalY + 10;
 
-    if (formData.comments) {
+    if (data.comments) {
       doc.setFontSize(10);
       doc.text("Comments:", 20, currentY);
-      doc.text(formData.comments, 20, currentY + 5, { maxWidth: 170 });
+      doc.text(data.comments, 20, currentY + 5, { maxWidth: 170 });
       currentY += 20;
     }
 
@@ -313,14 +313,14 @@ export default function App() {
 
     // Signatures
     doc.setFontSize(10);
-    doc.text(`Compliance Officer: ${formData.complianceOfficer}`, 20, currentY);
-    if (formData.complianceSignature) {
-      doc.addImage(formData.complianceSignature, 'PNG', 20, currentY + 2, 40, 15);
+    doc.text(`Compliance Officer: ${data.complianceOfficer}`, 20, currentY);
+    if (data.complianceSignature) {
+      doc.addImage(data.complianceSignature, 'PNG', 20, currentY + 2, 40, 15);
     }
     
-    doc.text(`For DBO; Name: ${formData.confirmationName} (${formData.designation})`, 110, currentY);
-    if (formData.dboSignature) {
-      doc.addImage(formData.dboSignature, 'PNG', 110, currentY + 2, 40, 15);
+    doc.text(`For DBO; Name: ${data.confirmationName} (${data.designation})`, 110, currentY);
+    if (data.dboSignature) {
+      doc.addImage(data.dboSignature, 'PNG', 110, currentY + 2, 40, 15);
     }
 
     return doc.output('datauristring');
@@ -353,7 +353,7 @@ export default function App() {
       const updatedData = { ...formData, endTime };
       setFormData(updatedData);
 
-      const pdf = await generatePDF();
+      const pdf = await generatePDF(updatedData);
 
       const res = await fetch('/api/submit', {
         method: 'POST',
