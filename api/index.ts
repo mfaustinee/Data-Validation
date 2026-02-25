@@ -52,28 +52,58 @@ app.post("/api/submit", async (req, res) => {
   try {
     const sheets = getSheetsClient();
 
-    let targetSheet = "";
-    let mainRow: any[] = [];
-
     // Mapping logic
+    const allRows: { sheet: string, rows: any[][] }[] = [];
+
     if (data.category === 'Mini Dairy' || data.category === 'Cottage Industry') {
-      targetSheet = "Mini Dairies & Cottages";
-      mainRow = [data.dboName, data.location, data.contacts, data.permitNo, data.expiryDate, data.sales[0]?.avgVolPerDay || "", data.dboName, data.contacts, data.sales[0]?.avgVolPerDay || "", data.permitNo, data.location, data.comments, data.sales[0]?.sellingPrice || "", data.traceability];
+      const sheet = "Mini Dairies & Cottages";
+      const rows = data.sales.map((sale: any) => [
+        data.dboName, data.location, data.contacts, data.permitNo, data.expiryDate, 
+        sale.avgVolPerDay || "", data.dboName, data.contacts, sale.avgVolPerDay || "", 
+        data.permitNo, data.location, data.comments, sale.sellingPrice || "", data.traceability,
+        `${sale.month} ${sale.year}`, sale.qtyDeclared, sale.verifiedQty, sale.underDeclared
+      ]);
+      allRows.push({ sheet, rows });
     } else if (data.category === 'Milk Bar' || data.category === 'Dispenser') {
-      targetSheet = "Dispensers & Milk Bars";
-      mainRow = [data.dboName, data.location, data.contacts, data.permitNo, data.expiryDate, data.sales[0]?.avgVolPerDay || "", data.sales[0]?.buyingPrice || "", data.sales[0]?.sellingPrice || "", data.traceability];
+      const sheet = "Dispensers & Milk Bars";
+      const rows = data.sales.map((sale: any) => [
+        data.dboName, data.location, data.contacts, data.permitNo, data.expiryDate, 
+        sale.avgVolPerDay || "", sale.buyingPrice || "", sale.sellingPrice || "", data.traceability,
+        `${sale.month} ${sale.year}`, sale.qtyDeclared, sale.verifiedQty, sale.underDeclared
+      ]);
+      allRows.push({ sheet, rows });
     } else if (data.category === 'CP<5,000 L/D' || data.category === 'CP>5,000 L/D' || data.category === 'Processor') {
-      targetSheet = "Cooling Plants";
-      mainRow = [data.dboName, data.location, data.contacts, data.permitNo, data.expiryDate, data.intakes[0]?.avgVolPerDay || "", data.intakes[0]?.farmerPrice || "", data.intakes[0]?.processorPrice || "", data.traceability, data.intakes.map((i: any) => `${i.month} ${i.year}: ${i.quantity}L`).join("\n")];
+      const sheet = "Cooling Plants";
+      // Capture Intakes
+      const intakeRows = data.intakes.map((intake: any) => [
+        data.dboName, data.location, data.contacts, data.permitNo, data.expiryDate, 
+        intake.avgVolPerDay || "", intake.farmerPrice || "", intake.processorPrice || "", data.traceability,
+        `${intake.month} ${intake.year}`, intake.quantity, "INTAKE"
+      ]);
+      allRows.push({ sheet, rows: intakeRows });
+      
+      // Capture Sales for Cooling Plants
+      const salesRows = data.sales
+        .filter((s: any) => s.qtyDeclared || s.verifiedQty)
+        .map((sale: any) => [
+          data.dboName, data.location, data.contacts, data.permitNo, data.expiryDate, 
+          sale.avgVolPerDay || "", sale.buyingPrice || "", sale.sellingPrice || "", data.traceability,
+          `${sale.month} ${sale.year}`, sale.qtyDeclared, "LOCAL SALES", sale.verifiedQty, sale.underDeclared
+        ]);
+      if (salesRows.length > 0) {
+        allRows.push({ sheet, rows: salesRows });
+      }
     }
 
-    if (targetSheet) {
-      await sheets.spreadsheets.values.append({
-        spreadsheetId,
-        range: `${targetSheet}!A:Z`,
-        valueInputOption: "USER_ENTERED",
-        requestBody: { values: [mainRow] },
-      });
+    for (const item of allRows) {
+      if (item.rows.length > 0) {
+        await sheets.spreadsheets.values.append({
+          spreadsheetId,
+          range: `${item.sheet}!A:Z`,
+          valueInputOption: "USER_ENTERED",
+          requestBody: { values: item.rows },
+        });
+      }
     }
 
     // Returns Validation logic
