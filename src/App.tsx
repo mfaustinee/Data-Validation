@@ -81,7 +81,7 @@ interface FormData {
 }
 
 const initialData: FormData = {
-  branch: 'KERICHO',
+  Branch: 'KERICHO',
   date: new Date().toISOString().split('T')[0],
   startTime: '',
   endTime: '',
@@ -93,7 +93,7 @@ const initialData: FormData = {
   contacts: '',
   validationPeriod: '',
   location: '',
-  county: 'KERICHO',
+  county: 'Kericho',
   traceability: 'YES',
   natureOfProduce: [],
   source: '',
@@ -218,7 +218,7 @@ export default function App() {
     };
     
     doc.setFontSize(18);
-    doc.text("Kenya Dairy Board - Data Validation Form", 105, 20, { align: "center" });
+    doc.text("Kenya Dairy Board Kericho - Data Validation Form", 105, 20, { align: "center" });
     
     doc.setFontSize(10);
     doc.text(`Branch: ${data.branch}`, 20, 35);
