@@ -7,7 +7,6 @@ import {
   Database, 
   CheckCircle2, 
   AlertCircle, 
-  Link as LinkIcon, 
   Loader2,
   Calendar,
   Clock,
@@ -121,7 +120,6 @@ const initialData: FormData = {
 export default function App() {
   const [formData, setFormData] = useState<FormData>(initialData);
   const [isConnected, setIsConnected] = useState(true); // Default to true for Service Account mode
-  const [spreadsheetId, setSpreadsheetId] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [status, setStatus] = useState<{ type: 'success' | 'error' | null; message: string }>({ type: null, message: '' });
   const [step, setStep] = useState(0);
@@ -340,12 +338,7 @@ export default function App() {
 
     // Validation
     if (!isConnected) {
-      setStatus({ type: 'error', message: 'Please connect to Google Sheets first (top of page).' });
-      setIsSubmitting(false);
-      return;
-    }
-    if (!spreadsheetId) {
-      setStatus({ type: 'error', message: 'Please enter a Spreadsheet ID (top of page).' });
+      setStatus({ type: 'error', message: 'Google Sheets integration is not configured. Please check your environment variables.' });
       setIsSubmitting(false);
       return;
     }
@@ -365,7 +358,7 @@ export default function App() {
       const res = await fetch('/api/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ spreadsheetId, data: updatedData, pdf }),
+        body: JSON.stringify({ data: updatedData, pdf }),
       });
 
       if (res.ok) {
@@ -451,7 +444,7 @@ export default function App() {
 
         {/* Connection Status */}
         <div className="mb-4 bg-white rounded-xl p-4 shadow-sm border border-black/5">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
               <div>
@@ -459,19 +452,12 @@ export default function App() {
                 <p className="text-[10px] text-gray-500">{isConnected ? 'Service Account Active' : 'Credentials Missing'}</p>
               </div>
             </div>
-            
-            <div className="flex flex-col sm:flex-row gap-2">
-              <div className="flex items-center gap-2 bg-gray-50 px-3 py-1.5 rounded-lg border border-black/5">
-                <LinkIcon className="w-3 h-3 text-emerald-600" />
-                <input
-                  type="text"
-                  placeholder="Enter Spreadsheet ID"
-                  value={spreadsheetId}
-                  onChange={(e) => setSpreadsheetId(e.target.value)}
-                  className="bg-transparent border-none focus:ring-0 text-xs w-full sm:w-48"
-                />
+            {isConnected && (
+              <div className="flex items-center gap-1.5 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
+                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Ready to Sync</span>
               </div>
-            </div>
+            )}
           </div>
         </div>
 

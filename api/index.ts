@@ -15,12 +15,11 @@ const getSheetsClient = () => {
     throw new Error("Service Account credentials (EMAIL/PRIVATE_KEY) are missing.");
   }
 
-  const auth = new google.auth.JWT(
-    clientEmail,
-    null,
-    privateKey,
-    ['https://www.googleapis.com/auth/spreadsheets']
-  );
+  const auth = new google.auth.JWT({
+    email: clientEmail,
+    key: privateKey,
+    scopes: ['https://www.googleapis.com/auth/spreadsheets']
+  });
 
   return google.sheets({ version: "v4", auth });
 };
@@ -35,9 +34,10 @@ app.get("/api/health", (req, res) => {
 });
 
 app.post("/api/submit", async (req, res) => {
-  const { spreadsheetId, data } = req.body;
+  const { data } = req.body;
+  const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID || req.body.spreadsheetId;
   
-  if (!spreadsheetId) return res.status(400).json({ error: "Spreadsheet ID missing" });
+  if (!spreadsheetId) return res.status(400).json({ error: "Spreadsheet ID missing. Please set GOOGLE_SPREADSHEET_ID environment variable." });
 
   try {
     const sheets = getSheetsClient();
