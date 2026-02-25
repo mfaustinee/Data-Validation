@@ -81,7 +81,7 @@ interface FormData {
 }
 
 const initialData: FormData = {
-  Branch: 'KERICHO',
+  branch: 'KERICHO',
   date: new Date().toISOString().split('T')[0],
   startTime: '',
   endTime: '',
@@ -93,7 +93,7 @@ const initialData: FormData = {
   contacts: '',
   validationPeriod: '',
   location: '',
-  county: 'Kericho',
+  county: 'KERICHO',
   traceability: 'YES',
   natureOfProduce: [],
   source: '',
@@ -218,7 +218,7 @@ export default function App() {
     };
     
     doc.setFontSize(18);
-    doc.text("Kenya Dairy Board Kericho - Data Validation Form", 105, 20, { align: "center" });
+    doc.text("Kenya Dairy Board - Data Validation Form", 105, 20, { align: "center" });
     
     doc.setFontSize(10);
     doc.text(`Branch: ${data.branch}`, 20, 35);
@@ -234,14 +234,14 @@ export default function App() {
 
     // Intakes Table
     if (data.category === 'CP>5,000 L/D' || data.category === 'CP<5,000 L/D' || data.category === 'Processor') {
-      checkPageBreak(20);
-      doc.setFontSize(11);
+      checkPageBreak(25);
+      doc.setFontSize(12);
       doc.text("Total Monthly Intakes", 20, currentY);
       autoTable(doc, {
         startY: currentY + 5,
-        head: [['Month/Year', 'Qty', 'Farmer Price', 'Processor', 'Proc. Price', 'Avg Vol/Day']],
+        head: [['Month/Year', 'Qty', 'Farmer Price', 'Processor', 'Proc. Price', 'Avg Collection/Day']],
         body: data.intakes.map(i => [`${i.month} ${i.year}`, i.quantity, i.farmerPrice, i.processor, i.processorPrice, i.avgVolPerDay]),
-        styles: { fontSize: 7 },
+        styles: { fontSize: 8 },
         didDrawPage: (data) => {
           currentY = data.cursor.y;
         }
@@ -250,12 +250,12 @@ export default function App() {
     }
 
     // Sales Table
-    checkPageBreak(20);
-    doc.setFontSize(11);
+    checkPageBreak(25);
+    doc.setFontSize(12);
     doc.text("Local Sales Data", 20, currentY);
     data.sales.forEach((sale, idx) => {
-      checkPageBreak(40);
-      doc.setFontSize(9);
+      checkPageBreak(45);
+      doc.setFontSize(10);
       doc.text(`Period: ${sale.month} ${sale.year}`, 20, currentY + 7);
       autoTable(doc, {
         startY: currentY + 10,
@@ -270,7 +270,7 @@ export default function App() {
           ['Avg Volume/Day', 'Litres', sale.avgVolPerDay],
         ],
         margin: { left: 25 },
-        styles: { fontSize: 7 },
+        styles: { fontSize: 8 },
         didDrawPage: (data) => {
           currentY = data.cursor.y;
         }
@@ -280,7 +280,7 @@ export default function App() {
     currentY += 5;
 
     // Summary Data
-    checkPageBreak(30);
+    checkPageBreak(35);
     autoTable(doc, {
       startY: currentY + 5,
       head: [['Detail', 'Value']],
@@ -289,7 +289,7 @@ export default function App() {
         ['Nature of Produce?', data.natureOfProduce.join(', ')],
         ['Source', data.source],
       ],
-      styles: { fontSize: 7 },
+      styles: { fontSize: 8 },
       didDrawPage: (data) => {
         currentY = data.cursor.y;
       }
@@ -297,12 +297,12 @@ export default function App() {
     currentY += 10;
 
     // Compliance Section
-    checkPageBreak(20);
-    doc.setFontSize(11);
+    checkPageBreak(25);
+    doc.setFontSize(12);
     doc.text("Compliance Commitment", 20, currentY);
     
     if (data.nonCompliance.length === 0) {
-      doc.setFontSize(9);
+      doc.setFontSize(10);
       doc.setTextColor(0, 128, 0); // Green
       doc.text("No under-declaration was witnessed.", 20, currentY + 7);
       doc.setTextColor(0, 0, 0); // Reset to black
@@ -315,7 +315,7 @@ export default function App() {
           ...data.nonCompliance.map(nc => [nc.month, nc.litres, nc.amount, nc.paymentMonthYear, nc.mpesaRef]),
           [{ content: 'TOTAL', styles: { fontStyle: 'bold' } }, '', { content: totalPenalty.toFixed(2), styles: { fontStyle: 'bold' } }, '', '']
         ],
-        styles: { fontSize: 7 },
+        styles: { fontSize: 8 },
         didDrawPage: (data) => {
           currentY = data.cursor.y;
         }
@@ -324,16 +324,16 @@ export default function App() {
     }
 
     if (data.comments) {
-      checkPageBreak(20);
-      doc.setFontSize(10);
+      checkPageBreak(25);
+      doc.setFontSize(11);
       doc.text("Comments:", 20, currentY);
       doc.text(data.comments, 20, currentY + 5, { maxWidth: 170 });
       currentY += 20;
     }
 
     // Declarations
-    checkPageBreak(40);
-    doc.setFontSize(10);
+    checkPageBreak(45);
+    doc.setFontSize(11);
     doc.text("Declarations:", 20, currentY);
     currentY += 5;
     const declarationText = [
@@ -344,15 +344,15 @@ export default function App() {
     ];
     declarationText.forEach(text => {
       const splitText = doc.splitTextToSize(text, 170);
-      checkPageBreak(splitText.length * 5);
+      checkPageBreak(splitText.length * 6);
       doc.text(splitText, 20, currentY);
-      currentY += splitText.length * 5;
+      currentY += splitText.length * 6;
     });
     currentY += 5;
 
     // Signatures
-    checkPageBreak(40);
-    doc.setFontSize(10);
+    checkPageBreak(45);
+    doc.setFontSize(11);
     doc.text(`Compliance Officer: ${data.complianceOfficer}`, 20, currentY);
     if (data.complianceSignature) {
       doc.addImage(data.complianceSignature, 'PNG', 20, currentY + 2, 40, 15);
@@ -638,7 +638,7 @@ export default function App() {
                         key={cat}
                         type="button"
                         onClick={() => setFormData(prev => ({ ...prev, category: cat }))}
-                        className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-all ${
+                        className={`px-4 py-2 rounded-lg text-xs font-bold border transition-all ${
                           formData.category === cat 
                             ? 'bg-blue-600 border-blue-600 text-white shadow-md' 
                             : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'
@@ -779,8 +779,14 @@ export default function App() {
                                 placeholder="0.00"
                                 value={intake.quantity}
                                 onChange={(e) => {
+                                  const val = e.target.value;
                                   const newIntakes = [...formData.intakes];
-                                  newIntakes[idx].quantity = e.target.value;
+                                  newIntakes[idx].quantity = val;
+                                  // Formula: Quantity / 30
+                                  const num = parseFloat(val);
+                                  if (!isNaN(num)) {
+                                    newIntakes[idx].avgVolPerDay = (num / 30).toFixed(2);
+                                  }
                                   setFormData(prev => ({ ...prev, intakes: newIntakes }));
                                 }}
                                 className="w-full px-3 py-1.5 rounded-lg border border-gray-200 outline-none text-[11px]"
@@ -826,7 +832,7 @@ export default function App() {
                               />
                             </div>
                             <div className="space-y-1">
-                              <label className="text-[9px] font-bold text-gray-400 uppercase">Avg Vol/Day (Litres)</label>
+                              <label className="text-[9px] font-bold text-gray-400 uppercase">Average Collection/Day (Litres/Kgs)</label>
                               <input
                                 placeholder="0.00"
                                 value={intake.avgVolPerDay}
@@ -835,7 +841,7 @@ export default function App() {
                                   newIntakes[idx].avgVolPerDay = e.target.value;
                                   setFormData(prev => ({ ...prev, intakes: newIntakes }));
                                 }}
-                                className="w-full px-3 py-1.5 rounded-lg border border-gray-200 outline-none text-[11px]"
+                                className="w-full px-3 py-1.5 rounded-lg border border-gray-200 outline-none text-[11px] bg-gray-50 font-bold text-blue-600"
                               />
                             </div>
                           </div>
@@ -937,11 +943,21 @@ export default function App() {
                                       readOnly={row.readOnly}
                                       value={(sale as any)[row.name]}
                                       onChange={(e) => {
+                                        const val = e.target.value;
                                         const newSales = [...formData.sales];
-                                        (newSales[idx] as any)[row.name] = e.target.value;
+                                        (newSales[idx] as any)[row.name] = val;
+                                        
+                                        // Formula for Avg Volume per Day based on Verified Quantity
+                                        if (row.name === 'verifiedQty') {
+                                          const num = parseFloat(val);
+                                          if (!isNaN(num)) {
+                                            newSales[idx].avgVolPerDay = (num / 30).toFixed(2);
+                                          }
+                                        }
+                                        
                                         setFormData(prev => ({ ...prev, sales: newSales }));
                                       }}
-                                      className={`w-full px-3 py-1.5 rounded-lg border outline-none text-xs ${row.readOnly ? 'bg-gray-50 border-gray-50 text-blue-600 font-bold' : 'border-gray-50 focus:border-blue-500'}`}
+                                      className={`w-full px-3 py-1.5 rounded-lg border outline-none text-xs ${row.readOnly || row.name === 'avgVolPerDay' ? 'bg-gray-50 border-gray-50 text-blue-600 font-bold' : 'border-gray-50 focus:border-blue-500'}`}
                                     />
                                   </td>
                                 </tr>

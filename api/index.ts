@@ -55,19 +55,11 @@ app.post("/api/submit", async (req, res) => {
     // Mapping logic
     const allRows: { sheet: string, rows: any[][] }[] = [];
 
-    if (data.category === 'Mini Dairy' || data.category === 'Cottage Industry') {
-      const sheet = "Mini Dairies & Cottages";
-      const rows = data.sales.map((sale: any) => [
-        data.dboName, data.location, data.contacts, data.permitNo, data.expiryDate, 
-        sale.avgVolPerDay || "", data.dboName, data.contacts, sale.avgVolPerDay || "", 
-        data.permitNo, data.location, data.comments, sale.sellingPrice || "", data.traceability,
-        `${sale.month} ${sale.year}`, sale.qtyDeclared, sale.verifiedQty, sale.underDeclared,
-        data.date, data.startTime, data.endTime,
-        Array.isArray(data.natureOfProduce) ? data.natureOfProduce.join(', ') : data.natureOfProduce
-      ]);
-      allRows.push({ sheet, rows });
-    } else if (data.category === 'Milk Bar' || data.category === 'Dispenser') {
-      const sheet = "Dispensers & Milk Bars";
+    if (data.category === 'Mini Dairy' || data.category === 'Cottage Industry' || data.category === 'Milk Bar' || data.category === 'Dispenser') {
+      const sheet = (data.category === 'Mini Dairy' || data.category === 'Cottage Industry') 
+        ? "Mini Dairies & Cottages" 
+        : "Dispensers & Milk Bars";
+        
       const rows = data.sales.map((sale: any) => [
         data.dboName, data.location, data.contacts, data.permitNo, data.expiryDate, 
         sale.avgVolPerDay || "", sale.buyingPrice || "", sale.sellingPrice || "", data.traceability,
@@ -82,9 +74,8 @@ app.post("/api/submit", async (req, res) => {
       const intakeRows = data.intakes.map((intake: any) => [
         data.dboName, data.location, data.contacts, data.permitNo, data.expiryDate, 
         intake.avgVolPerDay || "", intake.farmerPrice || "", intake.processorPrice || "", data.traceability,
-        `${intake.month} ${intake.year}`, intake.quantity, "INTAKE",
-        data.date, data.startTime, data.endTime,
-        Array.isArray(data.natureOfProduce) ? data.natureOfProduce.join(', ') : data.natureOfProduce
+        `${intake.month} ${intake.year}`, intake.quantity, "TOTAL INTAKE", "", "",
+        data.date, data.startTime, data.endTime
       ]);
       allRows.push({ sheet, rows: intakeRows });
       
@@ -95,8 +86,7 @@ app.post("/api/submit", async (req, res) => {
           data.dboName, data.location, data.contacts, data.permitNo, data.expiryDate, 
           sale.avgVolPerDay || "", sale.buyingPrice || "", sale.sellingPrice || "", data.traceability,
           `${sale.month} ${sale.year}`, sale.qtyDeclared, "LOCAL SALES", sale.verifiedQty, sale.underDeclared,
-          data.date, data.startTime, data.endTime,
-          Array.isArray(data.natureOfProduce) ? data.natureOfProduce.join(', ') : data.natureOfProduce
+          data.date, data.startTime, data.endTime
         ]);
       if (salesRows.length > 0) {
         allRows.push({ sheet, rows: salesRows });
@@ -112,20 +102,6 @@ app.post("/api/submit", async (req, res) => {
           requestBody: { values: item.rows },
         });
       }
-    }
-
-    // Returns Validation logic
-    const returnsRows = data.sales
-      .filter((s: any) => parseFloat(s.underDeclared) > 0)
-      .map((s: any) => [data.dboName, `${s.month} ${s.year}`, s.qtyDeclared, s.verifiedQty, s.underDeclared]);
-
-    if (returnsRows.length > 0) {
-      await sheets.spreadsheets.values.append({
-        spreadsheetId,
-        range: "Returns Validation!A:Z",
-        valueInputOption: "USER_ENTERED",
-        requestBody: { values: returnsRows },
-      });
     }
 
     res.json({ success: true });
