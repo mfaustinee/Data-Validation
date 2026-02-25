@@ -62,7 +62,7 @@ app.post("/api/submit", async (req, res) => {
         sale.avgVolPerDay || "", data.dboName, data.contacts, sale.avgVolPerDay || "", 
         data.permitNo, data.location, data.comments, sale.sellingPrice || "", data.traceability,
         `${sale.month} ${sale.year}`, sale.qtyDeclared, sale.verifiedQty, sale.underDeclared,
-        data.startTime, data.endTime,
+        data.date, data.startTime, data.endTime,
         Array.isArray(data.natureOfProduce) ? data.natureOfProduce.join(', ') : data.natureOfProduce
       ]);
       allRows.push({ sheet, rows });
@@ -72,7 +72,7 @@ app.post("/api/submit", async (req, res) => {
         data.dboName, data.location, data.contacts, data.permitNo, data.expiryDate, 
         sale.avgVolPerDay || "", sale.buyingPrice || "", sale.sellingPrice || "", data.traceability,
         `${sale.month} ${sale.year}`, sale.qtyDeclared, sale.verifiedQty, sale.underDeclared,
-        data.startTime, data.endTime,
+        data.date, data.startTime, data.endTime,
         Array.isArray(data.natureOfProduce) ? data.natureOfProduce.join(', ') : data.natureOfProduce
       ]);
       allRows.push({ sheet, rows });
@@ -83,7 +83,7 @@ app.post("/api/submit", async (req, res) => {
         data.dboName, data.location, data.contacts, data.permitNo, data.expiryDate, 
         intake.avgVolPerDay || "", intake.farmerPrice || "", intake.processorPrice || "", data.traceability,
         `${intake.month} ${intake.year}`, intake.quantity, "INTAKE",
-        data.startTime, data.endTime,
+        data.date, data.startTime, data.endTime,
         Array.isArray(data.natureOfProduce) ? data.natureOfProduce.join(', ') : data.natureOfProduce
       ]);
       allRows.push({ sheet, rows: intakeRows });
@@ -95,7 +95,7 @@ app.post("/api/submit", async (req, res) => {
           data.dboName, data.location, data.contacts, data.permitNo, data.expiryDate, 
           sale.avgVolPerDay || "", sale.buyingPrice || "", sale.sellingPrice || "", data.traceability,
           `${sale.month} ${sale.year}`, sale.qtyDeclared, "LOCAL SALES", sale.verifiedQty, sale.underDeclared,
-          data.startTime, data.endTime,
+          data.date, data.startTime, data.endTime,
           Array.isArray(data.natureOfProduce) ? data.natureOfProduce.join(', ') : data.natureOfProduce
         ]);
       if (salesRows.length > 0) {

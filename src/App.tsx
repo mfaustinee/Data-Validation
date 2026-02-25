@@ -206,6 +206,16 @@ export default function App() {
 
   const generatePDF = async (data: FormData = formData) => {
     const doc = new jsPDF();
+    let currentY = 90;
+
+    const checkPageBreak = (neededHeight: number) => {
+      if (currentY + neededHeight > 275) {
+        doc.addPage();
+        currentY = 20;
+        return true;
+      }
+      return false;
+    };
     
     doc.setFontSize(18);
     doc.text("Kenya Dairy Board - Data Validation Form", 105, 20, { align: "center" });
@@ -222,25 +232,29 @@ export default function App() {
     doc.text(`County: ${data.county}`, 110, 75);
     doc.text(`Location: ${data.location}`, 20, 80);
 
-    let currentY = 90;
-
     // Intakes Table
     if (data.category === 'CP>5,000 L/D' || data.category === 'CP<5,000 L/D' || data.category === 'Processor') {
+      checkPageBreak(20);
       doc.setFontSize(11);
       doc.text("Total Monthly Intakes", 20, currentY);
       autoTable(doc, {
         startY: currentY + 5,
         head: [['Month/Year', 'Qty', 'Farmer Price', 'Processor', 'Proc. Price', 'Avg Vol/Day']],
         body: data.intakes.map(i => [`${i.month} ${i.year}`, i.quantity, i.farmerPrice, i.processor, i.processorPrice, i.avgVolPerDay]),
-        styles: { fontSize: 7 }
+        styles: { fontSize: 7 },
+        didDrawPage: (data) => {
+          currentY = data.cursor.y;
+        }
       });
-      currentY = (doc as any).lastAutoTable.finalY + 10;
+      currentY += 10;
     }
 
     // Sales Table
+    checkPageBreak(20);
     doc.setFontSize(11);
     doc.text("Local Sales Data", 20, currentY);
     data.sales.forEach((sale, idx) => {
+      checkPageBreak(40);
       doc.setFontSize(9);
       doc.text(`Period: ${sale.month} ${sale.year}`, 20, currentY + 7);
       autoTable(doc, {
@@ -256,13 +270,17 @@ export default function App() {
           ['Avg Volume/Day', 'Litres', sale.avgVolPerDay],
         ],
         margin: { left: 25 },
-        styles: { fontSize: 7 }
+        styles: { fontSize: 7 },
+        didDrawPage: (data) => {
+          currentY = data.cursor.y;
+        }
       });
-      currentY = (doc as any).lastAutoTable.finalY + 5;
+      currentY += 5;
     });
     currentY += 5;
 
     // Summary Data
+    checkPageBreak(30);
     autoTable(doc, {
       startY: currentY + 5,
       head: [['Detail', 'Value']],
@@ -271,11 +289,15 @@ export default function App() {
         ['Nature of Produce?', data.natureOfProduce.join(', ')],
         ['Source', data.source],
       ],
-      styles: { fontSize: 7 }
+      styles: { fontSize: 7 },
+      didDrawPage: (data) => {
+        currentY = data.cursor.y;
+      }
     });
-    currentY = (doc as any).lastAutoTable.finalY + 10;
+    currentY += 10;
 
     // Compliance Section
+    checkPageBreak(20);
     doc.setFontSize(11);
     doc.text("Compliance Commitment", 20, currentY);
     
@@ -293,12 +315,16 @@ export default function App() {
           ...data.nonCompliance.map(nc => [nc.month, nc.litres, nc.amount, nc.paymentMonthYear, nc.mpesaRef]),
           [{ content: 'TOTAL', styles: { fontStyle: 'bold' } }, '', { content: totalPenalty.toFixed(2), styles: { fontStyle: 'bold' } }, '', '']
         ],
-        styles: { fontSize: 7 }
+        styles: { fontSize: 7 },
+        didDrawPage: (data) => {
+          currentY = data.cursor.y;
+        }
       });
-      currentY = (doc as any).lastAutoTable.finalY + 10;
+      currentY += 10;
     }
 
     if (data.comments) {
+      checkPageBreak(20);
       doc.setFontSize(10);
       doc.text("Comments:", 20, currentY);
       doc.text(data.comments, 20, currentY + 5, { maxWidth: 170 });
@@ -306,6 +332,7 @@ export default function App() {
     }
 
     // Declarations
+    checkPageBreak(40);
     doc.setFontSize(10);
     doc.text("Declarations:", 20, currentY);
     currentY += 5;
@@ -317,12 +344,14 @@ export default function App() {
     ];
     declarationText.forEach(text => {
       const splitText = doc.splitTextToSize(text, 170);
+      checkPageBreak(splitText.length * 5);
       doc.text(splitText, 20, currentY);
       currentY += splitText.length * 5;
     });
     currentY += 5;
 
     // Signatures
+    checkPageBreak(40);
     doc.setFontSize(10);
     doc.text(`Compliance Officer: ${data.complianceOfficer}`, 20, currentY);
     if (data.complianceSignature) {
