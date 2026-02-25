@@ -65,12 +65,13 @@ interface FormData {
   county: string;
   // Table Data (Now part of sales)
   traceability: string;
-  natureOfProduce: string;
+  natureOfProduce: string[];
   source: string;
   complianceOfficer: string;
   complianceSignature: string; // Base64
   confirmationName: string;
   dboSignature: string; // Base64
+  dboStamp: string; // Base64
   designation: string;
   // Dynamic sections
   intakes: IntakeEntry[];
@@ -94,12 +95,13 @@ const initialData: FormData = {
   location: '',
   county: 'KERICHO',
   traceability: 'YES',
-  natureOfProduce: '',
+  natureOfProduce: [],
   source: '',
   complianceOfficer: '',
   complianceSignature: '',
   confirmationName: '',
   dboSignature: '',
+  dboStamp: '',
   designation: '',
   intakes: [{ month: 'January', year: '2025', quantity: '', farmerPrice: '', processor: '', processorPrice: '', avgVolPerDay: '' }],
   sales: [{ 
@@ -265,8 +267,8 @@ export default function App() {
       startY: currentY + 5,
       head: [['Detail', 'Value']],
       body: [
-        ['Traceability', data.traceability],
-        ['Nature of Produce', data.natureOfProduce],
+        ['Are Traceability & Records Available', data.traceability],
+        ['Nature of Produce?', data.natureOfProduce.join(', ')],
         ['Source', data.source],
       ],
       styles: { fontSize: 7 }
@@ -276,16 +278,25 @@ export default function App() {
     // Compliance Section
     doc.setFontSize(11);
     doc.text("Compliance Commitment", 20, currentY);
-    autoTable(doc, {
-      startY: currentY + 5,
-      head: [['CSL Period (Month/Year)', 'Litres', 'Amount (Kshs)', 'Month/Year to Pay', 'MPESA REF']],
-      body: [
-        ...data.nonCompliance.map(nc => [nc.month, nc.litres, nc.amount, nc.paymentMonthYear, nc.mpesaRef]),
-        [{ content: 'TOTAL', styles: { fontStyle: 'bold' } }, '', { content: totalPenalty.toFixed(2), styles: { fontStyle: 'bold' } }, '', '']
-      ],
-      styles: { fontSize: 7 }
-    });
-    currentY = (doc as any).lastAutoTable.finalY + 10;
+    
+    if (data.nonCompliance.length === 0) {
+      doc.setFontSize(9);
+      doc.setTextColor(0, 128, 0); // Green
+      doc.text("No under-declaration was witnessed.", 20, currentY + 7);
+      doc.setTextColor(0, 0, 0); // Reset to black
+      currentY += 15;
+    } else {
+      autoTable(doc, {
+        startY: currentY + 5,
+        head: [['CSL Period (Month/Year)', 'Litres', 'Amount (Kshs)', 'Month/Year to Pay', 'MPESA REF']],
+        body: [
+          ...data.nonCompliance.map(nc => [nc.month, nc.litres, nc.amount, nc.paymentMonthYear, nc.mpesaRef]),
+          [{ content: 'TOTAL', styles: { fontStyle: 'bold' } }, '', { content: totalPenalty.toFixed(2), styles: { fontStyle: 'bold' } }, '', '']
+        ],
+        styles: { fontSize: 7 }
+      });
+      currentY = (doc as any).lastAutoTable.finalY + 10;
+    }
 
     if (data.comments) {
       doc.setFontSize(10);
@@ -321,6 +332,9 @@ export default function App() {
     doc.text(`For DBO; Name: ${data.confirmationName} (${data.designation})`, 110, currentY);
     if (data.dboSignature) {
       doc.addImage(data.dboSignature, 'PNG', 110, currentY + 2, 40, 15);
+    }
+    if (data.dboStamp) {
+      doc.addImage(data.dboStamp, 'PNG', 110, currentY + 18, 40, 15);
     }
 
     return doc.output('datauristring');
@@ -395,7 +409,7 @@ export default function App() {
 
   const years = ['2025', '2026'];
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, field: 'complianceSignature' | 'dboSignature') => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, field: 'complianceSignature' | 'dboSignature' | 'dboStamp') => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
@@ -931,14 +945,25 @@ export default function App() {
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Nature of Produce</label>
-                      <input
-                        type="text"
-                        name="natureOfProduce"
-                        value={formData.natureOfProduce}
-                        onChange={handleChange}
-                        className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 outline-none text-xs"
-                      />
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Nature of Produce?</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {['Pasteurized Milk', 'Raw Milk', 'Cultured Milk', 'Yoghurt'].map(opt => (
+                          <label key={opt} className="flex items-center gap-2 cursor-pointer group">
+                            <input
+                              type="checkbox"
+                              checked={formData.natureOfProduce.includes(opt)}
+                              onChange={(e) => {
+                                const newProduce = e.target.checked 
+                                  ? [...formData.natureOfProduce, opt]
+                                  : formData.natureOfProduce.filter(p => p !== opt);
+                                setFormData(prev => ({ ...prev, natureOfProduce: newProduce }));
+                              }}
+                              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <span className="text-[11px] text-gray-600 group-hover:text-gray-900 transition-colors">{opt}</span>
+                          </label>
+                        ))}
+                      </div>
                     </div>
                     <div className="space-y-2 md:col-span-2">
                       <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Source</label>
@@ -1187,6 +1212,20 @@ export default function App() {
                           />
                           {formData.dboSignature && (
                             <img src={formData.dboSignature} alt="DBO Signature" className="h-20 object-contain border rounded-lg bg-white" />
+                          )}
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">DBO Stamp</label>
+                        <div className="flex flex-col gap-2">
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => handleFileChange(e, 'dboStamp')}
+                            className="text-xs"
+                          />
+                          {formData.dboStamp && (
+                            <img src={formData.dboStamp} alt="DBO Stamp" className="h-20 object-contain border rounded-lg bg-white" />
                           )}
                         </div>
                       </div>
