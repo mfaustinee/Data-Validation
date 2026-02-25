@@ -9,10 +9,20 @@ app.use(cookieParser());
 // Service Account Auth Helper
 const getSheetsClient = () => {
   const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+  let privateKey = process.env.GOOGLE_PRIVATE_KEY;
 
   if (!clientEmail || !privateKey) {
     throw new Error("Service Account credentials (EMAIL/PRIVATE_KEY) are missing.");
+  }
+
+  // Clean the private key:
+  // 1. Remove any surrounding quotes that might have been pasted accidentally
+  privateKey = privateKey.trim().replace(/^["']|["']$/g, '');
+  // 2. Convert literal \n strings into actual newlines
+  privateKey = privateKey.replace(/\\n/g, '\n');
+
+  if (!privateKey.includes("-----BEGIN PRIVATE KEY-----")) {
+    throw new Error("Invalid Private Key format. It must start with '-----BEGIN PRIVATE KEY-----'. Check your environment variables.");
   }
 
   const auth = new google.auth.JWT({
