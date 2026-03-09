@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import SignatureCanvas from 'react-signature-canvas';
 import { 
   ClipboardCheck, 
   Database, 
@@ -16,7 +17,9 @@ import {
   FileText,
   ChevronRight,
   ChevronLeft,
-  Save
+  Save,
+  Trash2,
+  PenTool
 } from 'lucide-react';
 
 interface IntakeEntry {
@@ -147,13 +150,13 @@ export default function App() {
       .filter(sale => parseFloat(sale.underDeclared) > 0 && sale.month.trim() !== '')
       .map(sale => {
         const displayMonth = `${sale.month} ${sale.year}`;
-        // Find existing entry to preserve paymentMonthYear and mpesaRef
+        // Find existing entry to preserve data
         const existing = formData.nonCompliance.find(nc => nc.month === displayMonth);
         
         return {
           month: displayMonth,
           litres: sale.underDeclared,
-          amount: (parseFloat(sale.underDeclared) * (parseFloat(sale.buyingPrice) || 0) / 100 * 1.25).toFixed(2),
+          amount: existing?.amount || '', // Manual entry now
           paymentMonthYear: existing?.paymentMonthYear || '',
           mpesaRef: existing?.mpesaRef || ''
         };
@@ -354,16 +357,31 @@ export default function App() {
     checkPageBreak(45);
     doc.setFontSize(11);
     doc.text(`Compliance Officer: ${data.complianceOfficer}`, 20, currentY);
-    if (data.complianceSignature) {
-      doc.addImage(data.complianceSignature, 'PNG', 20, currentY + 2, 40, 15);
+    if (data.complianceSignature && data.complianceSignature.startsWith('data:image')) {
+      try {
+        const format = data.complianceSignature.includes('png') ? 'PNG' : 'JPEG';
+        doc.addImage(data.complianceSignature, format, 20, currentY + 2, 40, 15);
+      } catch (e) {
+        console.error('Error adding compliance signature:', e);
+      }
     }
     
     doc.text(`For DBO; Name: ${data.confirmationName} (${data.designation})`, 110, currentY);
-    if (data.dboSignature) {
-      doc.addImage(data.dboSignature, 'PNG', 110, currentY + 2, 40, 15);
+    if (data.dboSignature && data.dboSignature.startsWith('data:image')) {
+      try {
+        const format = data.dboSignature.includes('png') ? 'PNG' : 'JPEG';
+        doc.addImage(data.dboSignature, format, 110, currentY + 2, 40, 15);
+      } catch (e) {
+        console.error('Error adding DBO signature:', e);
+      }
     }
-    if (data.dboStamp) {
-      doc.addImage(data.dboStamp, 'PNG', 110, currentY + 18, 40, 15);
+    if (data.dboStamp && data.dboStamp.startsWith('data:image')) {
+      try {
+        const format = data.dboStamp.includes('png') ? 'PNG' : 'JPEG';
+        doc.addImage(data.dboStamp, format, 110, currentY + 18, 40, 15);
+      } catch (e) {
+        console.error('Error adding DBO stamp:', e);
+      }
     }
 
     return doc.output('datauristring');
@@ -438,14 +456,60 @@ export default function App() {
 
   const years = ['2025', '2026'];
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, field: 'complianceSignature' | 'dboSignature' | 'dboStamp') => {
+  const dboSigPad = useRef<SignatureCanvas>(null);
+
+  const compressImage = (base64: string, maxWidth = 800, maxHeight = 800): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = base64;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxWidth) {
+            height *= maxWidth / width;
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width *= maxHeight / height;
+            height = maxHeight;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.8)); // Use JPEG for smaller size
+      };
+      img.onerror = () => resolve(base64); // Fallback
+    });
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, field: 'complianceSignature' | 'dboSignature' | 'dboStamp') => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormData(prev => ({ ...prev, [field]: reader.result as string }));
+      reader.onloadend = async () => {
+        const compressed = await compressImage(reader.result as string);
+        setFormData(prev => ({ ...prev, [field]: compressed }));
       };
       reader.readAsDataURL(file);
+    }
+  };
+
+  const clearField = (field: 'complianceSignature' | 'dboSignature' | 'dboStamp') => {
+    setFormData(prev => ({ ...prev, [field]: '' }));
+  };
+
+  const saveDboSignature = async () => {
+    if (dboSigPad.current && !dboSigPad.current.isEmpty()) {
+      const sigData = dboSigPad.current.getTrimmedCanvas().toDataURL('image/png');
+      const compressed = await compressImage(sigData);
+      setFormData(prev => ({ ...prev, dboSignature: compressed }));
     }
   };
 
@@ -726,7 +790,7 @@ export default function App() {
                         <h3 className="font-bold text-blue-600 uppercase text-xs tracking-widest">Total Monthly Intake</h3>
                         <button
                           type="button"
-                          onClick={() => setFormData(prev => ({ ...prev, intakes: [...prev.intakes, { month: '', quantity: '', farmerPrice: '', processor: '', processorPrice: '', avgVolPerDay: '' }] }))}
+                          onClick={() => setFormData(prev => ({ ...prev, intakes: [...prev.intakes, { month: '', year: '2025', quantity: '', farmerPrice: '', processor: '', processorPrice: '', avgVolPerDay: '' }] }))}
                           className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
                         >
                           + Add Month
@@ -858,6 +922,7 @@ export default function App() {
                         type="button"
                         onClick={() => setFormData(prev => ({ ...prev, sales: [...prev.sales, { 
                           month: '', 
+                          year: '2025',
                           qtyDeclared: '', 
                           verifiedQty: '', 
                           projectedQty: '', 
@@ -1073,7 +1138,19 @@ export default function App() {
                             <tr key={idx}>
                               <td className="p-3 text-xs font-bold text-blue-800">{nc.month}</td>
                               <td className="p-3 text-xs text-blue-700">{nc.litres}</td>
-                              <td className="p-3 text-xs font-mono text-blue-700">{nc.amount}</td>
+                              <td className="p-1">
+                                <input
+                                  type="text"
+                                  placeholder="0.00"
+                                  value={nc.amount}
+                                  onChange={(e) => {
+                                    const newNC = [...formData.nonCompliance];
+                                    newNC[idx].amount = e.target.value;
+                                    setFormData(prev => ({ ...prev, nonCompliance: newNC }));
+                                  }}
+                                  className="w-full px-3 py-1.5 rounded-lg border border-blue-100 outline-none text-xs font-mono"
+                                />
+                              </td>
                               <td className="p-1">
                                 <input
                                   placeholder="MM/YYYY"
@@ -1212,14 +1289,24 @@ export default function App() {
                       <div className="space-y-2">
                         <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">Compliance Officer Signature</label>
                         <div className="flex flex-col gap-2">
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={(e) => handleFileChange(e, 'complianceSignature')}
-                            className="text-xs"
-                          />
-                          {formData.complianceSignature && (
-                            <img src={formData.complianceSignature} alt="Compliance Signature" className="h-20 object-contain border rounded-lg bg-white" />
+                          {!formData.complianceSignature ? (
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => handleFileChange(e, 'complianceSignature')}
+                              className="text-xs"
+                            />
+                          ) : (
+                            <div className="relative group">
+                              <img src={formData.complianceSignature} alt="Compliance Signature" className="h-20 object-contain border rounded-lg bg-white" />
+                              <button
+                                type="button"
+                                onClick={() => clearField('complianceSignature')}
+                                className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -1249,28 +1336,79 @@ export default function App() {
                       <div className="space-y-2">
                         <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">DBO Signature</label>
                         <div className="flex flex-col gap-2">
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={(e) => handleFileChange(e, 'dboSignature')}
-                            className="text-xs"
-                          />
-                          {formData.dboSignature && (
-                            <img src={formData.dboSignature} alt="DBO Signature" className="h-20 object-contain border rounded-lg bg-white" />
+                          {!formData.dboSignature ? (
+                            <div className="space-y-3">
+                              <div className="border-2 border-dashed border-gray-200 rounded-xl p-2 bg-gray-50">
+                                <SignatureCanvas
+                                  ref={dboSigPad}
+                                  penColor="black"
+                                  canvasProps={{
+                                    className: "w-full h-32 rounded-lg cursor-crosshair",
+                                    style: { background: 'white' }
+                                  }}
+                                />
+                                <div className="flex justify-between mt-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => dboSigPad.current?.clear()}
+                                    className="text-[10px] font-bold text-gray-500 hover:text-red-500 flex items-center gap-1"
+                                  >
+                                    <Trash2 className="w-3 h-3" /> Clear Pad
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={saveDboSignature}
+                                    className="text-[10px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                                  >
+                                    <PenTool className="w-3 h-3" /> Save Signature
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="text-center">
+                                <span className="text-[10px] text-gray-400 uppercase font-bold">OR UPLOAD IMAGE</span>
+                              </div>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) => handleFileChange(e, 'dboSignature')}
+                                className="text-xs"
+                              />
+                            </div>
+                          ) : (
+                            <div className="relative group">
+                              <img src={formData.dboSignature} alt="DBO Signature" className="h-20 object-contain border rounded-lg bg-white" />
+                              <button
+                                type="button"
+                                onClick={() => clearField('dboSignature')}
+                                className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
                           )}
                         </div>
                       </div>
                       <div className="space-y-2">
                         <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">DBO Stamp</label>
                         <div className="flex flex-col gap-2">
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={(e) => handleFileChange(e, 'dboStamp')}
-                            className="text-xs"
-                          />
-                          {formData.dboStamp && (
-                            <img src={formData.dboStamp} alt="DBO Stamp" className="h-20 object-contain border rounded-lg bg-white" />
+                          {!formData.dboStamp ? (
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => handleFileChange(e, 'dboStamp')}
+                              className="text-xs"
+                            />
+                          ) : (
+                            <div className="relative group">
+                              <img src={formData.dboStamp} alt="DBO Stamp" className="h-20 object-contain border rounded-lg bg-white" />
+                              <button
+                                type="button"
+                                onClick={() => clearField('dboStamp')}
+                                className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
                           )}
                         </div>
                       </div>
