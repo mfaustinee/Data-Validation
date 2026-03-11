@@ -231,9 +231,13 @@ export default function App() {
     
     doc.text(`DBO Name: ${data.dboName}`, 20, 60);
     doc.text(`Premise Name: ${data.premiseName}`, 20, 65);
+    doc.text(`Category: ${data.category}`, 20, 70);
+    doc.text(`Permit No: ${data.permitNo}`, 110, 70);
     doc.text(`Contacts: ${data.contacts}`, 20, 75);
     doc.text(`County: ${data.county}`, 110, 75);
     doc.text(`Location: ${data.location}`, 20, 80);
+    doc.text(`Expiry Date: ${data.expiryDate}`, 110, 80);
+    doc.text(`Validation Period: ${data.validationPeriod}`, 20, 85);
 
     // Intakes Table
     if (data.category === 'CP>5,000 L/D' || data.category === 'CP<5,000 L/D' || data.category === 'Processor') {
@@ -256,31 +260,16 @@ export default function App() {
     checkPageBreak(25);
     doc.setFontSize(12);
     doc.text("Local Sales Data", 20, currentY);
-    data.sales.forEach((sale, idx) => {
-      checkPageBreak(45);
-      doc.setFontSize(10);
-      doc.text(`Period: ${sale.month} ${sale.year}`, 20, currentY + 7);
-      autoTable(doc, {
-        startY: currentY + 10,
-        head: [['Detail', 'Unit', 'Value']],
-        body: [
-          ['Quantity Declared', 'Litres', sale.qtyDeclared],
-          ['Verified Quantity', 'Litres', sale.verifiedQty],
-          ['Projected Quantity', 'Litres', sale.projectedQty],
-          ['Under Declared', 'Litres', sale.underDeclared],
-          ['Buying Price', 'Kshs', sale.buyingPrice],
-          ['Selling Price', 'Kshs', sale.sellingPrice],
-          ['Avg Volume/Day', 'Litres', sale.avgVolPerDay],
-        ],
-        margin: { left: 25 },
-        styles: { fontSize: 8 },
-        didDrawPage: (data) => {
-          currentY = data.cursor.y;
-        }
-      });
-      currentY += 5;
+    autoTable(doc, {
+      startY: currentY + 5,
+      head: [['Month/Year', 'Declared', 'Verified', 'Projected', 'Under Declared', 'Buying Price', 'Selling Price', 'Avg Vol/Day']],
+      body: data.sales.map(s => [`${s.month} ${s.year}`, s.qtyDeclared, s.verifiedQty, s.projectedQty, s.underDeclared, s.buyingPrice, s.sellingPrice, s.avgVolPerDay]),
+      styles: { fontSize: 7 },
+      didDrawPage: (data) => {
+        currentY = data.cursor.y;
+      }
     });
-    currentY += 5;
+    currentY += 10;
 
     // Summary Data
     checkPageBreak(35);
