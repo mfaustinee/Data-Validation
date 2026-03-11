@@ -84,7 +84,7 @@ interface FormData {
 }
 
 const initialData: FormData = {
-  branch: 'KERICHO',
+  branch: 'Kericho',
   date: new Date().toISOString().split('T')[0],
   startTime: '',
   endTime: '',
@@ -96,7 +96,7 @@ const initialData: FormData = {
   contacts: '',
   validationPeriod: '',
   location: '',
-  county: 'KERICHO',
+  county: 'Kericho',
   traceability: 'YES',
   natureOfProduce: [],
   source: '',
@@ -207,9 +207,19 @@ export default function App() {
     setStep(1);
   };
 
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return dateStr;
+    const d = String(date.getDate()).padStart(2, '0');
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const y = date.getFullYear();
+    return `${d}/${m}/${y}`;
+  };
+
   const generatePDF = async (data: FormData = formData) => {
     const doc = new jsPDF();
-    let currentY = 90;
+    let currentY = 120;
 
     const checkPageBreak = (neededHeight: number) => {
       if (currentY + neededHeight > 275) {
@@ -220,24 +230,28 @@ export default function App() {
       return false;
     };
     
+    doc.setFont("helvetica", "bold");
     doc.setFontSize(18);
     doc.text("Kenya Dairy Board - Data Validation Form", 105, 20, { align: "center" });
+    doc.setLineWidth(0.5);
+    doc.line(45, 22, 165, 22);
+    doc.setFont("helvetica", "normal");
     
     doc.setFontSize(10);
     doc.text(`Branch: ${data.branch}`, 20, 35);
-    doc.text(`Date: ${data.date}`, 20, 40);
-    doc.text(`Start Time: ${data.startTime}`, 20, 45);
-    doc.text(`End Time: ${data.endTime}`, 20, 50);
+    doc.text(`Date: ${formatDate(data.date)}`, 20, 43);
+    doc.text(`Start Time: ${data.startTime}`, 20, 51);
+    doc.text(`End Time: ${data.endTime}`, 20, 59);
     
-    doc.text(`DBO Name: ${data.dboName}`, 20, 60);
-    doc.text(`Premise Name: ${data.premiseName}`, 20, 65);
-    doc.text(`Category: ${data.category}`, 20, 70);
-    doc.text(`Permit No: ${data.permitNo}`, 110, 70);
-    doc.text(`Contacts: ${data.contacts}`, 20, 75);
-    doc.text(`County: ${data.county}`, 110, 75);
-    doc.text(`Location: ${data.location}`, 20, 80);
-    doc.text(`Expiry Date: ${data.expiryDate}`, 110, 80);
-    doc.text(`Validation Period: ${data.validationPeriod}`, 20, 85);
+    doc.text(`DBO Name: ${data.dboName}`, 20, 71);
+    doc.text(`Premise Name: ${data.premiseName}`, 20, 79);
+    doc.text(`Category: ${data.category}`, 20, 87);
+    doc.text(`Permit No: ${data.permitNo}`, 110, 87);
+    doc.text(`Contacts: ${data.contacts}`, 20, 95);
+    doc.text(`Expiry Date: ${formatDate(data.expiryDate)}`, 110, 95);
+    doc.text(`Location: ${data.location}`, 20, 103);
+    doc.text(`County: ${data.county}`, 110, 103);
+    doc.text(`Validation Period: ${data.validationPeriod}`, 20, 111);
 
     // Intakes Table
     if (data.category === 'CP>5,000 L/D' || data.category === 'CP<5,000 L/D' || data.category === 'Processor') {
@@ -471,8 +485,13 @@ export default function App() {
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.8)); // Use JPEG for smaller size
+        if (ctx) {
+          // Fill with white background to avoid black background on JPEGs with transparency
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+        }
+        resolve(canvas.toDataURL('image/jpeg', 0.8));
       };
       img.onerror = () => resolve(base64); // Fallback
     });
