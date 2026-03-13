@@ -201,6 +201,45 @@ export default function App() {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
+  const validateStep = (s: number) => {
+    if (s === 1) {
+      const required = ['branch', 'date', 'permitNo', 'expiryDate', 'dboName', 'premiseName', 'category', 'contacts', 'validationPeriod', 'county', 'location'];
+      for (const field of required) {
+        const value = formData[field as keyof FormData];
+        if (!value || (typeof value === 'string' && value.trim() === '')) {
+          const label = field.replace(/([A-Z])/g, ' $1').toLowerCase();
+          setStatus({ type: 'error', message: `Please fill in the ${label} field.` });
+          return false;
+        }
+      }
+    } else if (s === 2) {
+      if (formData.category === 'CP>5,000 L/D' || formData.category === 'CP<5,000 L/D' || formData.category === 'Processor') {
+        for (const intake of formData.intakes) {
+          if (!intake.month || !intake.year || !intake.quantity || !intake.farmerPrice || !intake.processor || !intake.processorPrice) {
+            setStatus({ type: 'error', message: 'Please complete all fields in the monthly intake section.' });
+            return false;
+          }
+        }
+      }
+      for (const sale of formData.sales) {
+        if (!sale.month || !sale.year || !sale.qtyDeclared || !sale.verifiedQty || !sale.projectedQty || !sale.buyingPrice || !sale.sellingPrice) {
+          setStatus({ type: 'error', message: 'Please complete all fields in the local sales section.' });
+          return false;
+        }
+      }
+      if (formData.natureOfProduce.length === 0) {
+        setStatus({ type: 'error', message: 'Please select at least one nature of produce.' });
+        return false;
+      }
+      if (!formData.source) {
+        setStatus({ type: 'error', message: 'Please fill in the source field.' });
+        return false;
+      }
+    }
+    setStatus({ type: null, message: '' });
+    return true;
+  };
+
   const handleStart = () => {
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     setFormData(prev => ({ ...prev, startTime: now }));
@@ -406,6 +445,15 @@ export default function App() {
       setIsSubmitting(false);
       return;
     }
+    if (!validateStep(1) || !validateStep(2)) {
+      setIsSubmitting(false);
+      return;
+    }
+    if (!formData.complianceOfficer || !formData.complianceSignature || !formData.confirmationName || !formData.designation || !formData.dboSignature) {
+      setStatus({ type: 'error', message: 'Please complete all signature fields before submitting.' });
+      setIsSubmitting(false);
+      return;
+    }
     if (!declarations.accurate || !declarations.offense || !declarations.agreement || !declarations.awareness) {
       setStatus({ type: 'error', message: 'Please check all declaration boxes below before submitting.' });
       setIsSubmitting(false);
@@ -461,7 +509,7 @@ export default function App() {
 
   const dboSigPad = useRef<SignatureCanvas>(null);
 
-  const compressImage = (base64: string, maxWidth = 800, maxHeight = 800): Promise<string> => {
+  const compressImage = (base64: string, maxWidth = 800, maxHeight = 800, transparent = false): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
       img.src = base64;
@@ -486,14 +534,63 @@ export default function App() {
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         if (ctx) {
-          // Fill with white background to avoid black background on JPEGs with transparency
-          ctx.fillStyle = '#FFFFFF';
-          ctx.fillRect(0, 0, width, height);
+          if (!transparent) {
+            // Fill with white background to avoid black background on JPEGs with transparency
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillRect(0, 0, width, height);
+          }
           ctx.drawImage(img, 0, 0, width, height);
         }
-        resolve(canvas.toDataURL('image/jpeg', 0.8));
+        resolve(canvas.toDataURL(transparent ? 'image/png' : 'image/jpeg', 0.8));
       };
       img.onerror = () => resolve(base64); // Fallback
+    });
+  };
+
+  const extractStamp = (base64: string): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = base64;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(base64);
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          
+          // Calculate brightness
+          const brightness = (r + g + b) / 3;
+          
+          // If the pixel is bright (white-ish background), make it transparent
+          // We use a threshold to remove shadows on paper
+          if (brightness > 170) {
+            data[i + 3] = 0; 
+          } else {
+            // Ensure the ink is fully opaque and slightly enhanced
+            data[i + 3] = 255;
+            // Optional: darken dark pixels to make stamp crisper
+            if (brightness < 100) {
+              data[i] = Math.max(0, r - 20);
+              data[i+1] = Math.max(0, g - 20);
+              data[i+2] = Math.max(0, b - 20);
+            }
+          }
+        }
+        ctx.putImageData(imageData, 0, 0);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.onerror = () => resolve(base64);
     });
   };
 
@@ -502,8 +599,17 @@ export default function App() {
     if (file) {
       const reader = new FileReader();
       reader.onloadend = async () => {
-        const compressed = await compressImage(reader.result as string);
-        setFormData(prev => ({ ...prev, [field]: compressed }));
+        let result = reader.result as string;
+        if (field === 'dboStamp') {
+          // First extract the stamp (remove background)
+          result = await extractStamp(result);
+          // Then compress/resize while keeping transparency
+          const processed = await compressImage(result, 800, 800, true);
+          setFormData(prev => ({ ...prev, [field]: processed }));
+        } else {
+          const compressed = await compressImage(result);
+          setFormData(prev => ({ ...prev, [field]: compressed }));
+        }
       };
       reader.readAsDataURL(file);
     }
@@ -768,7 +874,7 @@ export default function App() {
                   <div className="flex justify-end pt-4">
                     <button
                       type="button"
-                      onClick={() => setStep(2)}
+                      onClick={() => validateStep(1) && setStep(2)}
                       className="flex items-center gap-2 px-8 py-3 bg-gray-900 text-white rounded-xl font-bold hover:bg-black transition-all"
                     >
                       Next Step
@@ -1106,7 +1212,7 @@ export default function App() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setStep(3)}
+                      onClick={() => validateStep(2) && setStep(3)}
                       className="flex items-center gap-2 px-8 py-3 bg-gray-900 text-white rounded-xl font-bold hover:bg-black transition-all"
                     >
                       Next Step
