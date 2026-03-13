@@ -76,6 +76,7 @@ interface FormData {
   dboSignature: string; // Base64
   dboStamp: string; // Base64
   designation: string;
+  hasLocalSales: boolean;
   // Dynamic sections
   intakes: IntakeEntry[];
   sales: SalesEntry[];
@@ -106,6 +107,7 @@ const initialData: FormData = {
   dboSignature: '',
   dboStamp: '',
   designation: '',
+  hasLocalSales: true,
   intakes: [{ month: 'January', year: '2025', quantity: '', farmerPrice: '', processor: '', processorPrice: '', avgVolPerDay: '' }],
   sales: [{ 
     month: new Date().toLocaleString('default', { month: 'long' }), 
@@ -146,21 +148,23 @@ export default function App() {
     });
 
     // Auto populate non-compliance based on under-declaration
-    const newNonCompliance = updatedSales
-      .filter(sale => parseFloat(sale.underDeclared) > 0 && sale.month.trim() !== '')
-      .map(sale => {
-        const displayMonth = `${sale.month} ${sale.year}`;
-        // Find existing entry to preserve data
-        const existing = formData.nonCompliance.find(nc => nc.month === displayMonth);
-        
-        return {
-          month: displayMonth,
-          litres: sale.underDeclared,
-          amount: existing?.amount || '', // Manual entry now
-          paymentMonthYear: existing?.paymentMonthYear || '',
-          mpesaRef: existing?.mpesaRef || ''
-        };
-      });
+    const newNonCompliance = formData.hasLocalSales 
+      ? updatedSales
+        .filter(sale => parseFloat(sale.underDeclared) > 0 && sale.month.trim() !== '')
+        .map(sale => {
+          const displayMonth = `${sale.month} ${sale.year}`;
+          // Find existing entry to preserve data
+          const existing = formData.nonCompliance.find(nc => nc.month === displayMonth);
+          
+          return {
+            month: displayMonth,
+            litres: sale.underDeclared,
+            amount: existing?.amount || '', // Manual entry now
+            paymentMonthYear: existing?.paymentMonthYear || '',
+            mpesaRef: existing?.mpesaRef || ''
+          };
+        })
+      : [];
 
     const salesChanged = JSON.stringify(updatedSales) !== JSON.stringify(formData.sales);
     const ncChanged = JSON.stringify(newNonCompliance) !== JSON.stringify(formData.nonCompliance);
@@ -221,10 +225,12 @@ export default function App() {
           }
         }
       }
-      for (const sale of formData.sales) {
-        if (!sale.month || !sale.year || !sale.qtyDeclared || !sale.verifiedQty || !sale.projectedQty || !sale.buyingPrice || !sale.sellingPrice) {
-          setStatus({ type: 'error', message: 'Please complete all fields in the local sales section.' });
-          return false;
+      if (formData.hasLocalSales) {
+        for (const sale of formData.sales) {
+          if (!sale.month || !sale.year || !sale.qtyDeclared || !sale.verifiedQty || !sale.projectedQty || !sale.buyingPrice || !sale.sellingPrice) {
+            setStatus({ type: 'error', message: 'Please complete all fields in the local sales section.' });
+            return false;
+          }
         }
       }
       if (formData.natureOfProduce.length === 0) {
@@ -310,19 +316,21 @@ export default function App() {
     }
 
     // Sales Table
-    checkPageBreak(25);
-    doc.setFontSize(12);
-    doc.text("Local Sales Data", 20, currentY);
-    autoTable(doc, {
-      startY: currentY + 5,
-      head: [['Month/Year', 'Declared', 'Verified', 'Projected', 'Under Declared', 'Buying Price', 'Selling Price', 'Avg Vol/Day']],
-      body: data.sales.map(s => [`${s.month} ${s.year}`, s.qtyDeclared, s.verifiedQty, s.projectedQty, s.underDeclared, s.buyingPrice, s.sellingPrice, s.avgVolPerDay]),
-      styles: { fontSize: 7 },
-      didDrawPage: (data) => {
-        currentY = data.cursor.y;
-      }
-    });
-    currentY += 10;
+    if (data.hasLocalSales) {
+      checkPageBreak(25);
+      doc.setFontSize(12);
+      doc.text("Local Sales Data", 20, currentY);
+      autoTable(doc, {
+        startY: currentY + 5,
+        head: [['Month/Year', 'Declared', 'Verified', 'Projected', 'Under Declared', 'Buying Price', 'Selling Price', 'Avg Vol/Day']],
+        body: data.sales.map(s => [`${s.month} ${s.year}`, s.qtyDeclared, s.verifiedQty, s.projectedQty, s.underDeclared, s.buyingPrice, s.sellingPrice, s.avgVolPerDay]),
+        styles: { fontSize: 7 },
+        didDrawPage: (data) => {
+          currentY = data.cursor.y;
+        }
+      });
+      currentY += 10;
+    }
 
     // Summary Data
     checkPageBreak(35);
@@ -1031,28 +1039,48 @@ export default function App() {
                   {/* Merged Local Sales Section */}
                   <div className="space-y-6">
                     <div className="flex items-center justify-between">
-                      <h3 className="font-bold text-blue-600 uppercase text-xs tracking-widest">Local Sales Data</h3>
-                      <button
-                        type="button"
-                        onClick={() => setFormData(prev => ({ ...prev, sales: [...prev.sales, { 
-                          month: '', 
-                          year: '2025',
-                          qtyDeclared: '', 
-                          verifiedQty: '', 
-                          projectedQty: '', 
-                          underDeclared: '0', 
-                          buyingPrice: '', 
-                          sellingPrice: '', 
-                          avgVolPerDay: '' 
-                        }] }))}
-                        className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
-                      >
-                        + Add Month
-                      </button>
+                      <div className="flex items-center gap-3">
+                        <h3 className="font-bold text-blue-600 uppercase text-xs tracking-widest">Local Sales Data</h3>
+                        {(formData.category === 'CP>5,000 L/D' || formData.category === 'CP<5,000 L/D' || formData.category === 'Processor') && (
+                          <label className="flex items-center gap-2 cursor-pointer bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
+                            <input
+                              type="checkbox"
+                              checked={formData.hasLocalSales}
+                              onChange={(e) => setFormData(prev => ({ ...prev, hasLocalSales: e.target.checked }))}
+                              className="w-3 h-3 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <span className="text-[10px] font-bold text-blue-700 uppercase">Has Local Sales?</span>
+                          </label>
+                        )}
+                      </div>
+                      {formData.hasLocalSales && (
+                        <button
+                          type="button"
+                          onClick={() => setFormData(prev => ({ ...prev, sales: [...prev.sales, { 
+                            month: '', 
+                            year: '2025',
+                            qtyDeclared: '', 
+                            verifiedQty: '', 
+                            projectedQty: '', 
+                            underDeclared: '0', 
+                            buyingPrice: '', 
+                            sellingPrice: '', 
+                            avgVolPerDay: '' 
+                          }] }))}
+                          className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
+                        >
+                          + Add Month
+                        </button>
+                      )}
                     </div>
 
-                    {formData.sales.map((sale, idx) => (
-                      <div key={idx} className="p-6 bg-white rounded-2xl border border-gray-200 space-y-4 relative shadow-sm">
+                    {!formData.hasLocalSales ? (
+                      <div className="p-8 bg-gray-50 rounded-2xl border border-dashed border-gray-200 text-center">
+                        <p className="text-sm text-gray-500 italic">Local sales section is locked/disabled for this entity.</p>
+                      </div>
+                    ) : (
+                      formData.sales.map((sale, idx) => (
+                        <div key={idx} className="p-6 bg-white rounded-2xl border border-gray-200 space-y-4 relative shadow-sm">
                         {idx > 0 && (
                           <button 
                             type="button"
@@ -1145,7 +1173,7 @@ export default function App() {
                           </table>
                         </div>
                       </div>
-                    ))}
+                    )))}
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
