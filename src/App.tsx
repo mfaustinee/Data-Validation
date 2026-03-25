@@ -299,12 +299,10 @@ export default function App() {
     };
     
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("Kenya Dairy Board", 105, 42, { align: "center" });
-    doc.setFontSize(14);
-    doc.text("Data Validation Form", 105, 50, { align: "center" });
+    doc.setFontSize(18);
+    doc.text("Data Validation Form", 105, 45, { align: "center" });
     doc.setLineWidth(0.5);
-    doc.line(45, 52, 165, 52);
+    doc.line(45, 47, 165, 47);
     doc.setFont("helvetica", "normal");
     
     doc.setFontSize(10);
