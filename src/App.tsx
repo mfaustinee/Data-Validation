@@ -420,7 +420,7 @@ export default function App() {
       "- I/We confirm that the information provided is true and accurate to the best of my/our knowledge.",
       "- I/We understand that under-declaration of milk volumes is an offense under the Dairy Industry Act.",
       "- I/We agree to pay the calculated penalty amounts within the specified periods.",
-      "- I/We confirm that I/We have been informed/presented with, read and understood the Client Awareness on Data Validation & Reconciliation scope, including the legal obligations to maintain records and traceability of the same as stipulated under the Dairy Industry Act (Cap 336), Laws of Kenya."
+      "- I/We confirm that I/We have been informed/presented with, read and understood the KDB Premise Inspection Scope Disclosure, including the legal obligations to maintain records and traceability of the same as stipulated under the Dairy Industry Act (Cap 336), Laws of Kenya."
     ];
     declarationText.forEach(text => {
       const splitText = doc.splitTextToSize(text, 170);
@@ -1425,7 +1425,7 @@ export default function App() {
                           <CheckCircle2 className="absolute h-3.5 w-3.5 text-white opacity-0 peer-checked:opacity-100 left-0.5" />
                         </div>
                         <span className="text-xs text-gray-600 leading-relaxed group-hover:text-gray-900 transition-colors">
-                          I/We confirm that I/We have been informed/presented with, read and understood the Client Awareness on Data Validation & Reconciliation scope, including the legal obligations to maintain records and traceability of the same as stipulated under the Dairy Industry Act (Cap 336), Laws of Kenya.
+                          I/We confirm that I/We have been informed/presented with, read and understood the KDB Premise Inspection Scope Disclosure, including the legal obligations to maintain records and traceability of the same as stipulated under the Dairy Industry Act (Cap 336), Laws of Kenya.
                         </span>
                       </label>
                     </div>
