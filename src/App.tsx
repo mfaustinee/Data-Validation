@@ -19,8 +19,12 @@ import {
   ChevronLeft,
   Save,
   Trash2,
-  PenTool
+  PenTool,
+  Image as ImageIcon
 } from 'lucide-react';
+
+// Replace this with your actual Supabase public URL
+const KDB_LOGO_URL = "https://odolazcniphinupgyaqo.supabase.co/storage/v1/object/sign/Pdf%20logo/KDB-LOGOx100h.png?token=eyJraWQiOiJzdG9yYWdlLXVybC1zaWduaW5nLWtleV8zNDNkNjNiOC1jY2RlLTQwYTgtOGVmMS1lN2UyY2NjNzQ0NjUiLCJhbGciOiJIUzI1NiJ9.eyJ1cmwiOiJQZGYgbG9nby9LREItTE9HT3gxMDBoLnBuZyIsImlhdCI6MTc3NDQwODY3MywiZXhwIjoyMDg5NzY4NjczfQ.r_8Gre72kWfCNdIGpiNEePogU0ieuPOJYqAyvqJ7YsQ";
 
 interface IntakeEntry {
   month: string;
@@ -264,7 +268,26 @@ export default function App() {
 
   const generatePDF = async (data: FormData = formData) => {
     const doc = new jsPDF();
-    let currentY = 120;
+    let currentY = 130;
+
+    // Helper to load image
+    const loadImage = (url: string): Promise<HTMLImageElement> => {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'Anonymous';
+        img.onload = () => resolve(img);
+        img.onerror = (e) => reject(e);
+        img.src = url;
+      });
+    };
+
+    try {
+      const logo = await loadImage(KDB_LOGO_URL);
+      // Center the logo (x, y, width, height)
+      doc.addImage(logo, 'PNG', 85, 10, 40, 25);
+    } catch (e) {
+      console.error("Could not load KDB logo for PDF", e);
+    }
 
     const checkPageBreak = (neededHeight: number) => {
       if (currentY + neededHeight > 275) {
@@ -276,27 +299,31 @@ export default function App() {
     };
     
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(18);
-    doc.text("Kenya Dairy Board - Data Validation Form", 105, 20, { align: "center" });
+    doc.setFontSize(16);
+    doc.text("Kenya Dairy Board", 105, 42, { align: "center" });
+    doc.setFontSize(14);
+    doc.text("Data Validation Form", 105, 50, { align: "center" });
     doc.setLineWidth(0.5);
-    doc.line(45, 22, 165, 22);
+    doc.line(45, 52, 165, 52);
     doc.setFont("helvetica", "normal");
     
     doc.setFontSize(10);
-    doc.text(`Branch: ${data.branch}`, 20, 35);
-    doc.text(`Date: ${formatDate(data.date)}`, 20, 43);
-    doc.text(`Start Time: ${data.startTime}`, 20, 51);
-    doc.text(`End Time: ${data.endTime}`, 20, 59);
+    doc.text(`Branch: ${data.branch}`, 20, 65);
+    doc.text(`Date: ${formatDate(data.date)}`, 20, 73);
+    doc.text(`Start Time: ${data.startTime}`, 20, 81);
+    doc.text(`End Time: ${data.endTime}`, 20, 89);
     
-    doc.text(`DBO Name: ${data.dboName}`, 20, 71);
-    doc.text(`Premise Name: ${data.premiseName}`, 20, 79);
-    doc.text(`Category: ${data.category}`, 20, 87);
-    doc.text(`Permit No: ${data.permitNo}`, 110, 87);
-    doc.text(`Contacts: ${data.contacts}`, 20, 95);
-    doc.text(`Expiry Date: ${formatDate(data.expiryDate)}`, 110, 95);
-    doc.text(`Location: ${data.location}`, 20, 103);
-    doc.text(`County: ${data.county}`, 110, 103);
-    doc.text(`Validation Period: ${data.validationPeriod}`, 20, 111);
+    doc.text(`DBO Name: ${data.dboName}`, 20, 101);
+    doc.text(`Premise Name: ${data.premiseName}`, 20, 109);
+    doc.text(`Category: ${data.category}`, 20, 117);
+    doc.text(`Permit No: ${data.permitNo}`, 110, 117);
+    doc.text(`Contacts: ${data.contacts}`, 20, 125);
+    doc.text(`Expiry Date: ${formatDate(data.expiryDate)}`, 110, 125);
+    doc.text(`Location: ${data.location}`, 20, 133);
+    doc.text(`County: ${data.county}`, 110, 133);
+    doc.text(`Validation Period: ${data.validationPeriod}`, 20, 141);
+
+    currentY = 150;
 
     // Intakes Table
     if (data.category === 'CP>5,000 L/D' || data.category === 'CP<5,000 L/D' || data.category === 'Processor') {
