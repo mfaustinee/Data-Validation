@@ -185,7 +185,7 @@ export default function App() {
       try {
         const res = await fetch('/api/health');
         if (res.ok) {
-          const data = await res.json();
+          const data: any = await res.json();
           console.log('API is healthy', data);
           setIsConnected(data.configured);
         } else {
@@ -493,7 +493,7 @@ export default function App() {
         setFormData(initialData);
         setStep(0); // Go back to start
       } else {
-        const error = await res.json();
+        const error: any = await res.json();
         throw new Error(error.error || 'Submission failed');
       }
     } catch (err: any) {
