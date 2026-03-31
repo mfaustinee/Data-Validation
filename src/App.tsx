@@ -138,8 +138,9 @@ export default function App() {
   const [status, setStatus] = useState<{ type: 'success' | 'error' | null; message: string }>({ type: null, message: '' });
   const [step, setStep] = useState(0);
   const [pdfPreview, setPdfPreview] = useState<string | null>(null);
-  const [lastCollections, setLastCollections] = useState<{ month: string, year: string, date: string }[]>([]);
+  const [lastCollections, setLastCollections] = useState<{ month: string, year: string, date: string, fullPeriod: string }[]>([]);
   const [isCheckingHistory, setIsCheckingHistory] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [declarations, setDeclarations] = useState({
     accurate: false,
     offense: false,
@@ -212,12 +213,14 @@ export default function App() {
   // Fetch last 2 months history for the DBO
   useEffect(() => {
     const fetchHistory = async () => {
-      if (!formData.dboName || formData.dboName.trim().length < 3) {
+      if (!supabase || !formData.dboName || formData.dboName.trim().length < 3) {
         setLastCollections([]);
+        setHistoryError(null);
         return;
       }
 
       setIsCheckingHistory(true);
+      setHistoryError(null);
       try {
         const { data, error } = await supabase
           .from('kdb_validations')
@@ -230,18 +233,19 @@ export default function App() {
 
         if (data) {
           const history = data.map(item => {
-            // Assuming validation_period is stored as "Month Year" or similar
             const parts = item.validation_period.split(' ');
             return {
               month: parts[0] || 'Unknown',
               year: parts[1] || '',
-              date: item.date
+              date: item.date,
+              fullPeriod: item.validation_period
             };
           });
           setLastCollections(history);
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error('Error fetching history:', err);
+        setHistoryError(err.message || 'Failed to fetch history');
       } finally {
         setIsCheckingHistory(false);
       }
@@ -540,6 +544,14 @@ export default function App() {
       return;
     }
 
+    // Duplicate check
+    const isDuplicate = lastCollections.some(c => c.fullPeriod.toLowerCase() === formData.validationPeriod.toLowerCase());
+    if (isDuplicate) {
+      setStatus({ type: 'error', message: `Data for ${formData.validationPeriod} has already been collected for this DBO. Please verify the validation period.` });
+      setIsSubmitting(false);
+      return;
+    }
+
     try {
       const endTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       const updatedData = { ...formData, endTime };
@@ -548,26 +560,28 @@ export default function App() {
       const pdf = await generatePDF(updatedData);
 
       // 1. Submit to Supabase (New)
-      try {
-        const { error: supabaseError } = await supabase
-          .from('kdb_validations')
-          .insert([{
-            dbo_name: updatedData.dboName,
-            premise_name: updatedData.premiseName,
-            branch: updatedData.branch,
-            date: updatedData.date,
-            validation_period: updatedData.validationPeriod,
-            category: updatedData.category,
-            permit_no: updatedData.permitNo,
-            location: updatedData.location,
-            county: updatedData.county,
-            total_penalty: totalPenalty,
-            raw_data: updatedData // Store full JSON for backup
-          }]);
-        
-        if (supabaseError) console.error('Supabase save error:', supabaseError);
-      } catch (err) {
-        console.error('Supabase integration failed:', err);
+      if (supabase) {
+        try {
+          const { error: supabaseError } = await supabase
+            .from('kdb_validations')
+            .insert([{
+              dbo_name: updatedData.dboName,
+              premise_name: updatedData.premiseName,
+              branch: updatedData.branch,
+              date: updatedData.date,
+              validation_period: updatedData.validationPeriod,
+              category: updatedData.category,
+              permit_no: updatedData.permitNo,
+              location: updatedData.location,
+              county: updatedData.county,
+              total_penalty: totalPenalty,
+              raw_data: updatedData // Store full JSON for backup
+            }]);
+          
+          if (supabaseError) console.error('Supabase save error:', supabaseError);
+        } catch (err) {
+          console.error('Supabase integration failed:', err);
+        }
       }
 
       // 2. Submit to Google Sheets (Original)
@@ -910,6 +924,16 @@ export default function App() {
                       
                       {/* History Banner */}
                       <AnimatePresence>
+                        {historyError && (
+                          <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            className="mt-2 p-2 bg-red-50 text-red-600 rounded-lg border border-red-100 text-[10px] flex items-center gap-1.5"
+                          >
+                            <AlertCircle className="w-3 h-3" />
+                            {historyError}
+                          </motion.div>
+                        )}
                         {lastCollections.length > 0 && (
                           <motion.div
                             initial={{ opacity: 0, y: -10 }}
