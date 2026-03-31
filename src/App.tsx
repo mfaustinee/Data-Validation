@@ -91,9 +91,16 @@ interface FormData {
   comments: string;
 }
 
+const getLocalDate = () => {
+  const now = new Date();
+  const offset = now.getTimezoneOffset();
+  const localDate = new Date(now.getTime() - (offset * 60 * 1000));
+  return localDate.toISOString().split('T')[0];
+};
+
 const initialData: FormData = {
   branch: 'Kericho',
-  date: new Date().toISOString().split('T')[0],
+  date: getLocalDate(),
   startTime: '',
   endTime: '',
   permitNo: '',
@@ -115,10 +122,10 @@ const initialData: FormData = {
   dboStamp: '',
   designation: '',
   hasLocalSales: true,
-  intakes: [{ month: 'January', year: '2025', quantity: '', farmerPrice: '', processor: '', processorPrice: '', avgVolPerDay: '' }],
+  intakes: [{ month: new Date().toLocaleString('default', { month: 'long' }), year: new Date().getFullYear().toString(), quantity: '', farmerPrice: '', processor: '', processorPrice: '', avgVolPerDay: '' }],
   sales: [{ 
     month: new Date().toLocaleString('default', { month: 'long' }), 
-    year: '2025',
+    year: new Date().getFullYear().toString(),
     qtyDeclared: '', 
     verifiedQty: '', 
     projectedQty: '', 
@@ -290,8 +297,16 @@ export default function App() {
 
     if (period && period !== formData.validationPeriod) {
       setFormData(prev => ({ ...prev, validationPeriod: period }));
+    } else if (!formData.validationPeriod && formData.date) {
+      // If period is empty, default to the month of the validation date
+      const d = new Date(formData.date);
+      if (!isNaN(d.getTime())) {
+        const m = d.toLocaleString('default', { month: 'long' });
+        const y = d.getFullYear().toString();
+        setFormData(prev => ({ ...prev, validationPeriod: `${m} ${y}` }));
+      }
     }
-  }, [formData.sales, formData.intakes, formData.hasLocalSales, formData.category]);
+  }, [formData.sales, formData.intakes, formData.hasLocalSales, formData.category, formData.date]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -340,8 +355,13 @@ export default function App() {
   };
 
   const handleStart = () => {
-    const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    setFormData(prev => ({ ...prev, startTime: now }));
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    setFormData(prev => ({ 
+      ...prev, 
+      startTime: timeStr,
+      date: getLocalDate()
+    }));
     setStep(1);
   };
 
@@ -661,7 +681,7 @@ export default function App() {
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
 
-  const years = ['2025', '2026'];
+  const years = ['2025', '2026', '2027'];
 
   const dboSigPad = useRef<SignatureCanvas>(null);
 
@@ -1112,7 +1132,7 @@ export default function App() {
                         <h3 className="font-bold text-blue-600 uppercase text-xs tracking-widest">Total Monthly Intake</h3>
                         <button
                           type="button"
-                          onClick={() => setFormData(prev => ({ ...prev, intakes: [...prev.intakes, { month: '', year: '2025', quantity: '', farmerPrice: '', processor: '', processorPrice: '', avgVolPerDay: '' }] }))}
+                          onClick={() => setFormData(prev => ({ ...prev, intakes: [...prev.intakes, { month: '', year: new Date().getFullYear().toString(), quantity: '', farmerPrice: '', processor: '', processorPrice: '', avgVolPerDay: '' }] }))}
                           className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
                         >
                           + Add Month
@@ -1258,7 +1278,7 @@ export default function App() {
                           type="button"
                           onClick={() => setFormData(prev => ({ ...prev, sales: [...prev.sales, { 
                             month: '', 
-                            year: '2025',
+                            year: new Date().getFullYear().toString(),
                             qtyDeclared: '', 
                             verifiedQty: '', 
                             projectedQty: '', 
