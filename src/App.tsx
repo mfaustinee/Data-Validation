@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import SignatureCanvas from 'react-signature-canvas';
+import { supabase } from './lib/supabase';
 import { 
   ClipboardCheck, 
   Database, 
@@ -20,7 +21,9 @@ import {
   Save,
   Trash2,
   PenTool,
-  Image as ImageIcon
+  Image as ImageIcon,
+  History,
+  Info
 } from 'lucide-react';
 
 // Replace this with your actual Supabase public URL
@@ -135,6 +138,8 @@ export default function App() {
   const [status, setStatus] = useState<{ type: 'success' | 'error' | null; message: string }>({ type: null, message: '' });
   const [step, setStep] = useState(0);
   const [pdfPreview, setPdfPreview] = useState<string | null>(null);
+  const [lastCollections, setLastCollections] = useState<{ month: string, year: string, date: string }[]>([]);
+  const [isCheckingHistory, setIsCheckingHistory] = useState(false);
   const [declarations, setDeclarations] = useState({
     accurate: false,
     offense: false,
@@ -203,6 +208,48 @@ export default function App() {
     };
     verifyApi();
   }, []);
+
+  // Fetch last 2 months history for the DBO
+  useEffect(() => {
+    const fetchHistory = async () => {
+      if (!formData.dboName || formData.dboName.trim().length < 3) {
+        setLastCollections([]);
+        return;
+      }
+
+      setIsCheckingHistory(true);
+      try {
+        const { data, error } = await supabase
+          .from('kdb_validations')
+          .select('validation_period, date')
+          .eq('dbo_name', formData.dboName)
+          .order('date', { ascending: false })
+          .limit(2);
+
+        if (error) throw error;
+
+        if (data) {
+          const history = data.map(item => {
+            // Assuming validation_period is stored as "Month Year" or similar
+            const parts = item.validation_period.split(' ');
+            return {
+              month: parts[0] || 'Unknown',
+              year: parts[1] || '',
+              date: item.date
+            };
+          });
+          setLastCollections(history);
+        }
+      } catch (err) {
+        console.error('Error fetching history:', err);
+      } finally {
+        setIsCheckingHistory(false);
+      }
+    };
+
+    const timer = setTimeout(fetchHistory, 800); // Debounce lookup
+    return () => clearTimeout(timer);
+  }, [formData.dboName]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -500,6 +547,30 @@ export default function App() {
 
       const pdf = await generatePDF(updatedData);
 
+      // 1. Submit to Supabase (New)
+      try {
+        const { error: supabaseError } = await supabase
+          .from('kdb_validations')
+          .insert([{
+            dbo_name: updatedData.dboName,
+            premise_name: updatedData.premiseName,
+            branch: updatedData.branch,
+            date: updatedData.date,
+            validation_period: updatedData.validationPeriod,
+            category: updatedData.category,
+            permit_no: updatedData.permitNo,
+            location: updatedData.location,
+            county: updatedData.county,
+            total_penalty: totalPenalty,
+            raw_data: updatedData // Store full JSON for backup
+          }]);
+        
+        if (supabaseError) console.error('Supabase save error:', supabaseError);
+      } catch (err) {
+        console.error('Supabase integration failed:', err);
+      }
+
+      // 2. Submit to Google Sheets (Original)
       const res = await fetch('/api/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -821,13 +892,54 @@ export default function App() {
 
                     <div className="space-y-2">
                       <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Name of DBO</label>
-                      <input
-                        type="text"
-                        name="dboName"
-                        value={formData.dboName}
-                        onChange={handleChange}
-                        className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-sm"
-                      />
+                      <div className="relative">
+                        <input
+                          type="text"
+                          name="dboName"
+                          value={formData.dboName}
+                          onChange={handleChange}
+                          className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-sm pr-10"
+                          placeholder="Type DBO name to check history..."
+                        />
+                        {isCheckingHistory && (
+                          <div className="absolute right-3 top-2.5">
+                            <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* History Banner */}
+                      <AnimatePresence>
+                        {lastCollections.length > 0 && (
+                          <motion.div
+                            initial={{ opacity: 0, y: -10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="mt-2 p-3 bg-blue-50 rounded-xl border border-blue-100 flex items-start gap-2"
+                          >
+                            <Info className="w-4 h-4 text-blue-600 mt-0.5" />
+                            <div>
+                              <p className="text-[11px] font-bold text-blue-800 uppercase tracking-tight">Recent History for {formData.dboName}</p>
+                              <p className="text-[10px] text-blue-600 mt-0.5">
+                                Last 2 collections: {lastCollections.map((c, i) => (
+                                  <span key={i} className="font-semibold">
+                                    {c.month} {c.year} ({formatDate(c.date)}){i < lastCollections.length - 1 ? ', ' : ''}
+                                  </span>
+                                ))}
+                              </p>
+                            </div>
+                          </motion.div>
+                        )}
+                        {!isCheckingHistory && formData.dboName.length >= 3 && lastCollections.length === 0 && (
+                          <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            className="mt-2 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-100 text-[10px] font-medium flex items-center gap-1.5"
+                          >
+                            <CheckCircle2 className="w-3 h-3" />
+                            No previous records found for this DBO.
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
                     </div>
                     <div className="space-y-2">
                       <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Premise Name</label>
