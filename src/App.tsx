@@ -138,7 +138,7 @@ export default function App() {
   const [status, setStatus] = useState<{ type: 'success' | 'error' | null; message: string }>({ type: null, message: '' });
   const [step, setStep] = useState(0);
   const [pdfPreview, setPdfPreview] = useState<string | null>(null);
-  const [lastCollections, setLastCollections] = useState<{ month: string, year: string, date: string, fullPeriod: string }[]>([]);
+  const [lastCollections, setLastCollections] = useState<{ month: string, year: string, date: string, fullPeriod: string, displayString: string }[]>([]);
   const [isCheckingHistory, setIsCheckingHistory] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [declarations, setDeclarations] = useState({
@@ -210,10 +210,10 @@ export default function App() {
     verifyApi();
   }, []);
 
-  // Fetch last 2 months history for the DBO
+  // Fetch last 2 months history for the Premise
   useEffect(() => {
     const fetchHistory = async () => {
-      if (!supabase || !formData.dboName || formData.dboName.trim().length < 3) {
+      if (!supabase || !formData.premiseName || formData.premiseName.trim().length < 3) {
         setLastCollections([]);
         setHistoryError(null);
         return;
@@ -222,10 +222,11 @@ export default function App() {
       setIsCheckingHistory(true);
       setHistoryError(null);
       try {
+        const searchTerm = formData.premiseName.trim();
         const { data, error } = await supabase
           .from('kdb_validations')
           .select('validation_period, date')
-          .eq('dbo_name', formData.dboName)
+          .ilike('premise_name', searchTerm)
           .order('date', { ascending: false })
           .limit(2);
 
@@ -233,12 +234,22 @@ export default function App() {
 
         if (data) {
           const history = data.map(item => {
-            const parts = item.validation_period.split(' ');
+            // Try to get month/year from the date field for more reliable display
+            const recordDate = new Date(item.date);
+            let displayMonth = 'Unknown';
+            let displayYear = '';
+            
+            if (!isNaN(recordDate.getTime())) {
+              displayMonth = recordDate.toLocaleString('default', { month: 'long' });
+              displayYear = recordDate.getFullYear().toString();
+            }
+
             return {
-              month: parts[0] || 'Unknown',
-              year: parts[1] || '',
+              month: displayMonth,
+              year: displayYear,
               date: item.date,
-              fullPeriod: item.validation_period
+              fullPeriod: item.validation_period,
+              displayString: `${displayMonth} ${displayYear}`
             };
           });
           setLastCollections(history);
@@ -253,7 +264,34 @@ export default function App() {
 
     const timer = setTimeout(fetchHistory, 800); // Debounce lookup
     return () => clearTimeout(timer);
-  }, [formData.dboName]);
+  }, [formData.premiseName]);
+
+  // Auto-populate validation period from table data
+  useEffect(() => {
+    const isCoolingPlant = formData.category === 'CP>5,000 L/D' || formData.category === 'CP<5,000 L/D' || formData.category === 'Processor';
+    
+    let period = '';
+    if (isCoolingPlant) {
+      // For cooling plants, prioritize intakes if local sales are disabled
+      if (!formData.hasLocalSales && formData.intakes.length > 0) {
+        const lastIntake = formData.intakes[formData.intakes.length - 1];
+        if (lastIntake.month && lastIntake.year) period = `${lastIntake.month} ${lastIntake.year}`;
+      } else if (formData.sales.length > 0) {
+        const lastSale = formData.sales[formData.sales.length - 1];
+        if (lastSale.month && lastSale.year) period = `${lastSale.month} ${lastSale.year}`;
+      }
+    } else {
+      // For other categories, check sales
+      if (formData.sales.length > 0) {
+        const lastSale = formData.sales[formData.sales.length - 1];
+        if (lastSale.month && lastSale.year) period = `${lastSale.month} ${lastSale.year}`;
+      }
+    }
+
+    if (period && period !== formData.validationPeriod) {
+      setFormData(prev => ({ ...prev, validationPeriod: period }));
+    }
+  }, [formData.sales, formData.intakes, formData.hasLocalSales, formData.category]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -547,7 +585,7 @@ export default function App() {
     // Duplicate check
     const isDuplicate = lastCollections.some(c => c.fullPeriod.toLowerCase() === formData.validationPeriod.toLowerCase());
     if (isDuplicate) {
-      setStatus({ type: 'error', message: `Data for ${formData.validationPeriod} has already been collected for this DBO. Please verify the validation period.` });
+      setStatus({ type: 'error', message: `Data for ${formData.validationPeriod} has already been collected for this Premise. Please verify the validation period.` });
       setIsSubmitting(false);
       return;
     }
@@ -906,14 +944,25 @@ export default function App() {
 
                     <div className="space-y-2">
                       <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Name of DBO</label>
+                      <input
+                        type="text"
+                        name="dboName"
+                        value={formData.dboName}
+                        onChange={handleChange}
+                        className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-sm"
+                        placeholder="Enter DBO name..."
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Premise Name</label>
                       <div className="relative">
                         <input
                           type="text"
-                          name="dboName"
-                          value={formData.dboName}
+                          name="premiseName"
+                          value={formData.premiseName}
                           onChange={handleChange}
                           className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-sm pr-10"
-                          placeholder="Type DBO name to check history..."
+                          placeholder="Type premise name to check history..."
                         />
                         {isCheckingHistory && (
                           <div className="absolute right-3 top-2.5">
@@ -942,38 +991,28 @@ export default function App() {
                           >
                             <Info className="w-4 h-4 text-blue-600 mt-0.5" />
                             <div>
-                              <p className="text-[11px] font-bold text-blue-800 uppercase tracking-tight">Recent History for {formData.dboName}</p>
+                              <p className="text-[11px] font-bold text-blue-800 uppercase tracking-tight">Recent History for {formData.premiseName}</p>
                               <p className="text-[10px] text-blue-600 mt-0.5">
                                 Last 2 collections: {lastCollections.map((c, i) => (
                                   <span key={i} className="font-semibold">
-                                    {c.month} {c.year} ({formatDate(c.date)}){i < lastCollections.length - 1 ? ', ' : ''}
+                                    {c.displayString}{i < lastCollections.length - 1 ? ', ' : ''}
                                   </span>
                                 ))}
                               </p>
                             </div>
                           </motion.div>
                         )}
-                        {!isCheckingHistory && formData.dboName.length >= 3 && lastCollections.length === 0 && (
+                        {!isCheckingHistory && formData.premiseName.length >= 3 && lastCollections.length === 0 && (
                           <motion.div
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
                             className="mt-2 px-3 py-1 bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-100 text-[10px] font-medium flex items-center gap-1.5"
                           >
                             <CheckCircle2 className="w-3 h-3" />
-                            No previous records found for this DBO.
+                            No previous records found for this Premise.
                           </motion.div>
                         )}
                       </AnimatePresence>
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Premise Name</label>
-                      <input
-                        type="text"
-                        name="premiseName"
-                        value={formData.premiseName}
-                        onChange={handleChange}
-                        className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-sm"
-                      />
                     </div>
                   </div>
 
