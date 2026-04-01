@@ -145,7 +145,7 @@ export default function App() {
   const [status, setStatus] = useState<{ type: 'success' | 'error' | null; message: string }>({ type: null, message: '' });
   const [step, setStep] = useState(0);
   const [pdfPreview, setPdfPreview] = useState<string | null>(null);
-  const [lastCollections, setLastCollections] = useState<{ month: string, year: string, date: string, fullPeriod: string, displayString: string }[]>([]);
+  const [lastCollections, setLastCollections] = useState<{ month: string, year: string, date: string, fullPeriod: string, displayString: string, matchedPremise?: string }[]>([]);
   const [isCheckingHistory, setIsCheckingHistory] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [declarations, setDeclarations] = useState({
@@ -217,7 +217,7 @@ export default function App() {
     verifyApi();
   }, []);
 
-  // Fetch last 2 months history for the Premise
+  // Fetch last 3 months history for the Premise
   useEffect(() => {
     const fetchHistory = async () => {
       if (!supabase || !formData.premiseName || formData.premiseName.trim().length < 3) {
@@ -230,35 +230,58 @@ export default function App() {
       setHistoryError(null);
       try {
         const searchTerm = formData.premiseName.trim();
+        // Use partial matching with wildcards for long names
         const { data, error } = await supabase
           .from('kdb_validations')
-          .select('validation_period, date')
-          .ilike('premise_name', searchTerm)
+          .select('validation_period, date, premise_name, raw_data')
+          .ilike('premise_name', `%${searchTerm}%`)
           .order('date', { ascending: false })
-          .limit(2);
+          .limit(10); // Fetch more to extract enough unique months
 
         if (error) throw error;
 
         if (data) {
-          const history = data.map(item => {
-            // Try to get month/year from the date field for more reliable display
-            const recordDate = new Date(item.date);
-            let displayMonth = 'Unknown';
-            let displayYear = '';
+          const uniqueMonths: string[] = [];
+          data.forEach(item => {
+            const raw = item.raw_data as any;
+            const monthsInRecord: string[] = [];
             
-            if (!isNaN(recordDate.getTime())) {
-              displayMonth = recordDate.toLocaleString('default', { month: 'long' });
-              displayYear = recordDate.getFullYear().toString();
+            if (raw) {
+              const isCoolingPlant = raw.category === 'CP>5,000 L/D' || raw.category === 'CP<5,000 L/D' || raw.category === 'Processor';
+              
+              // Prioritize Sales section, fallback to Intakes if Sales is unavailable/disabled
+              if (isCoolingPlant && !raw.hasLocalSales && raw.intakes && raw.intakes.length > 0) {
+                raw.intakes.forEach((i: any) => {
+                  if (i.month && i.year) monthsInRecord.push(`${i.month} ${i.year}`);
+                });
+              } else if (raw.sales && raw.sales.length > 0) {
+                raw.sales.forEach((s: any) => {
+                  if (s.month && s.year) monthsInRecord.push(`${s.month} ${s.year}`);
+                });
+              }
             }
-
-            return {
-              month: displayMonth,
-              year: displayYear,
-              date: item.date,
-              fullPeriod: item.validation_period,
-              displayString: `${displayMonth} ${displayYear}`
-            };
+            
+            // Fallback to validation_period if no months extracted from raw_data
+            if (monthsInRecord.length === 0 && item.validation_period) {
+              monthsInRecord.push(item.validation_period);
+            }
+            
+            // Add to unique list (up to 3)
+            monthsInRecord.forEach(m => {
+              if (!uniqueMonths.includes(m) && uniqueMonths.length < 3) {
+                uniqueMonths.push(m);
+              }
+            });
           });
+
+          const history = uniqueMonths.map(m => ({
+            month: '', 
+            year: '',
+            date: '',
+            fullPeriod: m,
+            displayString: m,
+            matchedPremise: data[0]?.premise_name
+          }));
           setLastCollections(history);
         }
       } catch (err: any) {
@@ -1011,14 +1034,16 @@ export default function App() {
                           >
                             <Info className="w-4 h-4 text-blue-600 mt-0.5" />
                             <div>
-                              <p className="text-[11px] font-bold text-blue-800 uppercase tracking-tight">Recent History for {formData.premiseName}</p>
-                              <p className="text-[10px] text-blue-600 mt-0.5">
-                                Last 2 collections: {lastCollections.map((c, i) => (
-                                  <span key={i} className="font-semibold">
-                                    {c.displayString}{i < lastCollections.length - 1 ? ', ' : ''}
-                                  </span>
-                                ))}
-                              </p>
+                                <p className="text-[11px] font-bold text-blue-800 uppercase tracking-tight">
+                                  Recent History for {lastCollections[0]?.matchedPremise || formData.premiseName}
+                                </p>
+                                <p className="text-[10px] text-blue-600 mt-0.5">
+                                  Last 3 validated months: {lastCollections.map((c, i) => (
+                                    <span key={i} className="font-semibold">
+                                      {c.displayString}{i < lastCollections.length - 1 ? ', ' : ''}
+                                    </span>
+                                  ))}
+                                </p>
                             </div>
                           </motion.div>
                         )}
