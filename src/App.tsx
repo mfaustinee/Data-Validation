@@ -145,15 +145,31 @@ export default function App() {
   const [status, setStatus] = useState<{ type: 'success' | 'error' | null; message: string }>({ type: null, message: '' });
   const [step, setStep] = useState(0);
   const [pdfPreview, setPdfPreview] = useState<string | null>(null);
-  const [lastCollections, setLastCollections] = useState<{ month: string, year: string, date: string, fullPeriod: string, displayString: string, matchedPremise?: string }[]>([]);
+  const [lastCollections, setLastCollections] = useState<{ month: string, year: string, date: string, fullPeriod: string, displayString: string, matchedPremise?: string, pdfPath?: string }[]>([]);
   const [isCheckingHistory, setIsCheckingHistory] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  
+  const [lastDboRecords, setLastDboRecords] = useState<any[]>([]);
+  const [isCheckingDbo, setIsCheckingDbo] = useState(false);
+  const [dboError, setDboError] = useState<string | null>(null);
   const [declarations, setDeclarations] = useState({
     accurate: false,
     offense: false,
     agreement: false,
     awareness: false
   });
+
+  const [isValidationPeriodEdited, setIsValidationPeriodEdited] = useState(false);
+  const [hasDraft, setHasDraft] = useState(false);
+  const [failedFields, setFailedFields] = useState<string[]>([]);
+
+  const getInputClass = (name: string, extraClasses: string = '', basePadding: string = 'px-4 py-2 rounded-xl') => {
+    const isFailed = failedFields.includes(name);
+    const borderClass = isFailed
+      ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20'
+      : 'border-gray-200 focus:border-blue-500 focus:ring-blue-200';
+    return `w-full border transition-all outline-none ${basePadding} ${borderClass} ${extraClasses}`;
+  };
 
   useEffect(() => {
     // Auto calculate under declared volume for each sales entry
@@ -233,54 +249,83 @@ export default function App() {
         // Use partial matching with wildcards for long names
         const { data, error } = await supabase
           .from('kdb_validations')
-          .select('validation_period, date, premise_name, raw_data')
+          .select('validation_period, date, premise_name, raw_data, pdf_path')
           .ilike('premise_name', `%${searchTerm}%`)
           .order('date', { ascending: false })
-          .limit(10); // Fetch more to extract enough unique months
+          .limit(50); // Fetch more records to ensure we get all historical months
 
         if (error) throw error;
 
         if (data) {
-          const uniqueMonths: string[] = [];
+          const allExtractedMonths: { period: string; pdfPath?: string; score: number }[] = [];
+          
           data.forEach(item => {
             const raw = item.raw_data as any;
-            const monthsInRecord: string[] = [];
+            const periodsInThisRecord: string[] = [];
             
             if (raw) {
               const isCoolingPlant = raw.category === 'CP>5,000 L/D' || raw.category === 'CP<5,000 L/D' || raw.category === 'Processor';
               
-              // Prioritize Sales section, fallback to Intakes if Sales is unavailable/disabled
               if (isCoolingPlant && !raw.hasLocalSales && raw.intakes && raw.intakes.length > 0) {
                 raw.intakes.forEach((i: any) => {
-                  if (i.month && i.year) monthsInRecord.push(`${i.month} ${i.year}`);
+                  if (i.month && i.year) {
+                    periodsInThisRecord.push(`${i.month} ${i.year}`);
+                  }
                 });
               } else if (raw.sales && raw.sales.length > 0) {
                 raw.sales.forEach((s: any) => {
-                  if (s.month && s.year) monthsInRecord.push(`${s.month} ${s.year}`);
+                  if (s.month && s.year) {
+                    periodsInThisRecord.push(`${s.month} ${s.year}`);
+                  }
                 });
               }
             }
             
-            // Fallback to validation_period if no months extracted from raw_data
-            if (monthsInRecord.length === 0 && item.validation_period) {
-              monthsInRecord.push(item.validation_period);
+            // Always fallback / include the validation_period itself
+            if (item.validation_period) {
+              periodsInThisRecord.push(item.validation_period);
             }
             
-            // Add to unique list (up to 3)
-            monthsInRecord.forEach(m => {
-              if (!uniqueMonths.includes(m) && uniqueMonths.length < 3) {
-                uniqueMonths.push(m);
+            // Score each period
+            periodsInThisRecord.forEach(p => {
+              const normalized = p.trim();
+              const parts = normalized.toLowerCase().split(/\s+/);
+              if (parts.length >= 2) {
+                const monthStr = parts[0];
+                const year = parseInt(parts[1], 10);
+                const months = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+                const monthIndex = months.indexOf(monthStr);
+                if (monthIndex !== -1 && !isNaN(year)) {
+                  const score = year * 12 + monthIndex;
+                  allExtractedMonths.push({ period: normalized, pdfPath: item.pdf_path, score });
+                }
               }
             });
           });
 
-          const history = uniqueMonths.map(m => ({
+          // Deduplicate based on period, keeping the one with a PDF if possible
+          const deduplicated: Record<string, { period: string; pdfPath?: string; score: number }> = {};
+          allExtractedMonths.forEach(m => {
+            const key = m.period.toLowerCase();
+            if (!deduplicated[key] || (!deduplicated[key].pdfPath && m.pdfPath)) {
+              deduplicated[key] = m;
+            }
+          });
+
+          // Convert to array and sort descending by chronological score (newest first)
+          const sortedList = Object.values(deduplicated).sort((a, b) => b.score - a.score);
+
+          // Get absolute top 3 newest months
+          const top3 = sortedList.slice(0, 3);
+
+          const history = top3.map(m => ({
             month: '', 
             year: '',
             date: '',
-            fullPeriod: m,
-            displayString: m,
-            matchedPremise: data[0]?.premise_name
+            fullPeriod: m.period,
+            displayString: m.period,
+            matchedPremise: data[0]?.premise_name,
+            pdfPath: m.pdfPath
           }));
           setLastCollections(history);
         }
@@ -296,8 +341,135 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [formData.premiseName]);
 
+  // Fetch previous validations by DBO Name
+  useEffect(() => {
+    const fetchDboHistory = async () => {
+      if (!supabase || !formData.dboName || formData.dboName.trim().length < 3) {
+        setLastDboRecords([]);
+        setDboError(null);
+        return;
+      }
+
+      setIsCheckingDbo(true);
+      setDboError(null);
+      try {
+        const searchTerm = formData.dboName.trim();
+        const { data, error } = await supabase
+          .from('kdb_validations')
+          .select('dbo_name, premise_name, category, permit_no, location, county, raw_data, date')
+          .ilike('dbo_name', `%${searchTerm}%`)
+          .order('date', { ascending: false })
+          .limit(10);
+
+        if (error) throw error;
+        
+        // Deduplicate records by unique premise, permit to yield cleanest autofill options
+        if (data) {
+          const uniqueMap: Record<string, any> = {};
+          data.forEach(item => {
+            const key = `${item.premise_name || ''}-${item.permit_no || ''}`.toLowerCase().trim();
+            if (!uniqueMap[key]) {
+              uniqueMap[key] = item;
+            }
+          });
+          setLastDboRecords(Object.values(uniqueMap).slice(0, 5));
+        } else {
+          setLastDboRecords([]);
+        }
+      } catch (err: any) {
+        console.error('Error fetching DBO history:', err);
+        setDboError(err.message || 'Failed to fetch DBO history');
+      } finally {
+        setIsCheckingDbo(false);
+      }
+    };
+
+    const timer = setTimeout(fetchDboHistory, 500); // 500ms debounce
+    return () => clearTimeout(timer);
+  }, [formData.dboName]);
+
+  // Load saved draft on mount
+  useEffect(() => {
+    const draft = localStorage.getItem('kdb_validation_form_draft');
+    if (draft) {
+      try {
+        JSON.parse(draft);
+        setHasDraft(true);
+      } catch (e) {
+        localStorage.removeItem('kdb_validation_form_draft');
+      }
+    }
+  }, []);
+
+  // Save draft when form data changes
+  useEffect(() => {
+    const hasPopulatedInput = 
+      formData.dboName || 
+      formData.premiseName || 
+      formData.permitNo || 
+      formData.validationPeriod || 
+      formData.sales.some(s => s.qtyDeclared || s.verifiedQty) ||
+      formData.intakes.some(i => i.quantity);
+
+    if (hasPopulatedInput) {
+      localStorage.setItem('kdb_validation_form_draft', JSON.stringify(formData));
+    }
+  }, [formData]);
+
+  const handleRestoreDraft = () => {
+    const draft = localStorage.getItem('kdb_validation_form_draft');
+    if (draft) {
+      try {
+        const parsed = JSON.parse(draft);
+        setFormData(parsed);
+        setFailedFields([]);
+        // Re-eval step based on draft data
+        if (parsed.branch) setStep(1); // Resume at step 1 if the user started
+        setStatus({ type: 'success', message: 'Unsaved draft successfully restored!' });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    setHasDraft(false);
+  };
+
+  const handleDiscardDraft = () => {
+    localStorage.removeItem('kdb_validation_form_draft');
+    setHasDraft(false);
+    setStatus({ type: 'success', message: 'Draft cleared.' });
+  };
+
+  const handleDboAutofill = (record: any) => {
+    const raw = record.raw_data || {};
+    setFormData(prev => ({
+      ...prev,
+      dboName: record.dbo_name || prev.dboName,
+      permitNo: raw.permitNo || record.permit_no || prev.permitNo,
+      premiseName: raw.premiseName || record.premise_name || prev.premiseName,
+      category: raw.category || record.category || prev.category,
+      contacts: raw.contacts || prev.contacts,
+      county: raw.county || record.county || prev.county,
+      location: raw.location || record.location || prev.location,
+      expiryDate: raw.expiryDate || prev.expiryDate || '',
+      validationPeriod: raw.validationPeriod || prev.validationPeriod || '',
+    }));
+    
+    // Once they autofill, allow override and prevent background useEffect from overriding it
+    setIsValidationPeriodEdited(true);
+
+    // Clear matches to hide suggestions
+    setLastDboRecords([]);
+    
+    // Clear any failed fields
+    setFailedFields(prev => prev.filter(f => ![
+      'dboName', 'permitNo', 'premiseName', 'category', 'contacts', 'county', 'location', 'expiryDate'
+    ].includes(f)));
+  };
+
   // Auto-populate validation period from table data
   useEffect(() => {
+    if (isValidationPeriodEdited) return;
+
     const isCoolingPlant = formData.category === 'CP>5,000 L/D' || formData.category === 'CP<5,000 L/D' || formData.category === 'Processor';
     
     let period = '';
@@ -329,50 +501,91 @@ export default function App() {
         setFormData(prev => ({ ...prev, validationPeriod: `${m} ${y}` }));
       }
     }
-  }, [formData.sales, formData.intakes, formData.hasLocalSales, formData.category, formData.date]);
+  }, [formData.sales, formData.intakes, formData.hasLocalSales, formData.category, formData.date, isValidationPeriodEdited]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
+    setFailedFields(prev => prev.filter(f => f !== name));
+    if (name === 'validationPeriod') {
+      setIsValidationPeriodEdited(true);
+    }
   };
 
   const validateStep = (s: number) => {
+    const missing: string[] = [];
+
     if (s === 1) {
       const required = ['branch', 'date', 'permitNo', 'expiryDate', 'dboName', 'premiseName', 'category', 'contacts', 'validationPeriod', 'county', 'location'];
       for (const field of required) {
         const value = formData[field as keyof FormData];
         if (!value || (typeof value === 'string' && value.trim() === '')) {
-          const label = field.replace(/([A-Z])/g, ' $1').toLowerCase();
-          setStatus({ type: 'error', message: `Please fill in the ${label} field.` });
-          return false;
+          missing.push(field);
         }
+      }
+
+      if (missing.length > 0) {
+        setFailedFields(prev => Array.from(new Set([...prev, ...missing])));
+        const firstFieldLabel = missing[0].replace(/([A-Z])/g, ' $1').toLowerCase();
+        setStatus({ type: 'error', message: `Please fill in all general information fields (missing: ${firstFieldLabel}).` });
+        return false;
       }
     } else if (s === 2) {
       if (formData.category === 'CP>5,000 L/D' || formData.category === 'CP<5,000 L/D' || formData.category === 'Processor') {
-        for (const intake of formData.intakes) {
-          if (!intake.month || !intake.year || !intake.quantity || !intake.farmerPrice || !intake.processor || !intake.processorPrice) {
-            setStatus({ type: 'error', message: 'Please complete all fields in the monthly intake section.' });
-            return false;
-          }
-        }
+        formData.intakes.forEach((intake, idx) => {
+          if (!intake.month) missing.push(`intake-${idx}-month`);
+          if (!intake.year) missing.push(`intake-${idx}-year`);
+          if (!intake.quantity || intake.quantity.trim() === '') missing.push(`intake-${idx}-quantity`);
+          if (!intake.farmerPrice || intake.farmerPrice.trim() === '') missing.push(`intake-${idx}-farmerPrice`);
+          if (!intake.processor || intake.processor.trim() === '') missing.push(`intake-${idx}-processor`);
+          if (!intake.processorPrice || intake.processorPrice.trim() === '') missing.push(`intake-${idx}-processorPrice`);
+        });
       }
       if (formData.hasLocalSales) {
-        for (const sale of formData.sales) {
-          if (!sale.month || !sale.year || !sale.qtyDeclared || !sale.verifiedQty || !sale.projectedQty || !sale.buyingPrice || !sale.sellingPrice) {
-            setStatus({ type: 'error', message: 'Please complete all fields in the local sales section.' });
-            return false;
-          }
-        }
+        formData.sales.forEach((sale, idx) => {
+          if (!sale.month) missing.push(`sale-${idx}-month`);
+          if (!sale.year) missing.push(`sale-${idx}-year`);
+          if (!sale.qtyDeclared || sale.qtyDeclared.trim() === '') missing.push(`sale-${idx}-qtyDeclared`);
+          if (!sale.verifiedQty || sale.verifiedQty.trim() === '') missing.push(`sale-${idx}-verifiedQty`);
+          if (!sale.projectedQty || sale.projectedQty.trim() === '') missing.push(`sale-${idx}-projectedQty`);
+          if (!sale.buyingPrice || sale.buyingPrice.trim() === '') missing.push(`sale-${idx}-buyingPrice`);
+          if (!sale.sellingPrice || sale.sellingPrice.trim() === '') missing.push(`sale-${idx}-sellingPrice`);
+        });
       }
       if (formData.natureOfProduce.length === 0) {
-        setStatus({ type: 'error', message: 'Please select at least one nature of produce.' });
-        return false;
+        missing.push('natureOfProduce');
       }
-      if (!formData.source) {
-        setStatus({ type: 'error', message: 'Please fill in the source field.' });
+      if (!formData.source || formData.source.trim() === '') {
+        missing.push('source');
+      }
+
+      if (missing.length > 0) {
+        setFailedFields(prev => Array.from(new Set([...prev, ...missing])));
+        if (missing.includes('natureOfProduce')) {
+          setStatus({ type: 'error', message: 'Please select at least one nature of produce.' });
+        } else if (missing.includes('source')) {
+          setStatus({ type: 'error', message: 'Please fill in the source field.' });
+        } else if (missing.some(m => m.startsWith('intake-'))) {
+          setStatus({ type: 'error', message: 'Please complete all fields in the monthly intake section.' });
+        } else if (missing.some(m => m.startsWith('sale-'))) {
+          setStatus({ type: 'error', message: 'Please complete all fields in the local sales section.' });
+        } else {
+          setStatus({ type: 'error', message: 'Please complete all required fields.' });
+        }
         return false;
       }
     }
+
+    setFailedFields(prev => prev.filter(f => {
+      if (s === 1) {
+        const required = ['branch', 'date', 'permitNo', 'expiryDate', 'dboName', 'premiseName', 'category', 'contacts', 'validationPeriod', 'county', 'location'];
+        return !required.includes(f);
+      }
+      if (s === 2) {
+        return f.startsWith('intake-') || f.startsWith('sale-') || f === 'natureOfProduce' || f === 'source';
+      }
+      return true;
+    }));
     setStatus({ type: null, message: '' });
     return true;
   };
@@ -429,6 +642,14 @@ export default function App() {
       }
       return false;
     };
+
+    const writeField = (label: string, value: string, x: number, y: number) => {
+      doc.setFont("helvetica", "bold");
+      doc.text(label, x, y);
+      const labelWidth = doc.getTextWidth(label);
+      doc.setFont("helvetica", "normal");
+      doc.text(` ${value || ''}`, x + labelWidth, y);
+    };
     
     doc.setFont("helvetica", "bold");
     doc.setFontSize(18);
@@ -438,20 +659,20 @@ export default function App() {
     doc.setFont("helvetica", "normal");
     
     doc.setFontSize(10);
-    doc.text(`Branch: ${data.branch}`, 20, 65);
-    doc.text(`Date: ${formatDate(data.date)}`, 20, 73);
-    doc.text(`Start Time: ${data.startTime}`, 20, 81);
-    doc.text(`End Time: ${data.endTime}`, 20, 89);
+    writeField("Branch:", data.branch, 20, 65);
+    writeField("Date:", formatDate(data.date), 20, 73);
+    writeField("Start Time:", data.startTime, 20, 81);
+    writeField("End Time:", data.endTime, 20, 89);
     
-    doc.text(`DBO Name: ${data.dboName}`, 20, 101);
-    doc.text(`Premise Name: ${data.premiseName}`, 20, 109);
-    doc.text(`Category: ${data.category}`, 20, 117);
-    doc.text(`Permit No: ${data.permitNo}`, 110, 117);
-    doc.text(`Contacts: ${data.contacts}`, 20, 125);
-    doc.text(`Expiry Date: ${formatDate(data.expiryDate)}`, 110, 125);
-    doc.text(`Location: ${data.location}`, 20, 133);
-    doc.text(`County: ${data.county}`, 110, 133);
-    doc.text(`Validation Period: ${data.validationPeriod}`, 20, 141);
+    writeField("Dairy Business Operator (DBO) Name:", data.dboName, 20, 101);
+    writeField("Premise Name:", data.premiseName, 20, 109);
+    writeField("Category:", data.category, 20, 117);
+    writeField("Permit No:", data.permitNo, 110, 117);
+    writeField("Contacts:", data.contacts, 20, 125);
+    writeField("Expiry Date:", formatDate(data.expiryDate), 110, 125);
+    writeField("Location:", data.location, 20, 133);
+    writeField("County:", data.county, 110, 133);
+    writeField("Validation Period:", data.validationPeriod, 20, 141);
 
     currentY = 150;
 
@@ -464,11 +685,9 @@ export default function App() {
         startY: currentY + 5,
         head: [['Month/Year', 'Qty', 'Farmer Price', 'Processor', 'Proc. Price', 'Avg Collection/Day']],
         body: data.intakes.map(i => [`${i.month} ${i.year}`, i.quantity, i.farmerPrice, i.processor, i.processorPrice, i.avgVolPerDay]),
-        styles: { fontSize: 8 },
-        didDrawPage: (data) => {
-          currentY = data.cursor.y;
-        }
+        styles: { fontSize: 8 }
       });
+      currentY = (doc as any).lastAutoTable.finalY;
       currentY += 10;
     }
 
@@ -476,16 +695,16 @@ export default function App() {
     if (data.hasLocalSales) {
       checkPageBreak(25);
       doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
       doc.text("Local Sales Data", 20, currentY);
+      doc.setFont("helvetica", "normal");
       autoTable(doc, {
         startY: currentY + 5,
         head: [['Month/Year', 'Declared', 'Verified', 'Projected', 'Under Declared', 'Buying Price', 'Selling Price', 'Avg Vol/Day']],
         body: data.sales.map(s => [`${s.month} ${s.year}`, s.qtyDeclared, s.verifiedQty, s.projectedQty, s.underDeclared, s.buyingPrice, s.sellingPrice, s.avgVolPerDay]),
-        styles: { fontSize: 7 },
-        didDrawPage: (data) => {
-          currentY = data.cursor.y;
-        }
+        styles: { fontSize: 7 }
       });
+      currentY = (doc as any).lastAutoTable.finalY;
       currentY += 10;
     }
 
@@ -499,17 +718,17 @@ export default function App() {
         ['Nature of Produce?', data.natureOfProduce.join(', ')],
         ['Source', data.source],
       ],
-      styles: { fontSize: 8 },
-      didDrawPage: (data) => {
-        currentY = data.cursor.y;
-      }
+      styles: { fontSize: 8 }
     });
+    currentY = (doc as any).lastAutoTable.finalY;
     currentY += 10;
 
     // Compliance Section
     checkPageBreak(25);
     doc.setFontSize(12);
-    doc.text("Compliance Commitment", 20, currentY);
+    doc.setFont("helvetica", "bold");
+    doc.text("Compliance Commitment:", 20, currentY);
+    doc.setFont("helvetica", "normal");
     
     if (data.nonCompliance.length === 0) {
       doc.setFontSize(10);
@@ -525,18 +744,18 @@ export default function App() {
           ...data.nonCompliance.map(nc => [nc.month, nc.litres, nc.amount, nc.paymentMonthYear, nc.mpesaRef]),
           [{ content: 'TOTAL', styles: { fontStyle: 'bold' } }, '', { content: totalPenalty.toFixed(2), styles: { fontStyle: 'bold' } }, '', '']
         ],
-        styles: { fontSize: 8 },
-        didDrawPage: (data) => {
-          currentY = data.cursor.y;
-        }
+        styles: { fontSize: 8 }
       });
+      currentY = (doc as any).lastAutoTable.finalY;
       currentY += 10;
     }
 
     if (data.comments) {
       checkPageBreak(25);
       doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
       doc.text("Comments:", 20, currentY);
+      doc.setFont("helvetica", "normal");
       doc.text(data.comments, 20, currentY + 5, { maxWidth: 170 });
       currentY += 20;
     }
@@ -544,21 +763,30 @@ export default function App() {
     // Declarations
     checkPageBreak(45);
     doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
     doc.text("Declarations:", 20, currentY);
-    currentY += 5;
-    const declarationText = [
-      "- I/We confirm that the information provided is true and accurate to the best of my/our knowledge.",
-      "- I/We understand that under-declaration of milk volumes is an offense under the Dairy Industry Act.",
-      "- I/We agree to pay the calculated penalty amounts within the specified periods.",
-      "- I/We confirm that I/We have been informed/presented with, read and understood the KDB Premise Inspection Scope Disclosure, including the legal obligations to maintain records and traceability of the same as stipulated under the Dairy Industry Act (Cap 336), Laws of Kenya."
+    doc.setFont("helvetica", "normal");
+    currentY += 7;
+    const declarationTexts = [
+      "I/We confirm that the information provided is true and accurate to the best of my/our knowledge.",
+      "I/We understand that under-declaration of milk volumes is an offense under the Dairy Industry Act.",
+      "I/We agree to pay the calculated penalty amounts within the specified periods.",
+      "I/We confirm that I/We have been informed/presented with, read and understood the KDB Premise Inspection Scope Disclosure, including the legal obligations to maintain records and traceability of the same as stipulated under the Dairy Industry Act (Cap 336), Laws of Kenya."
     ];
-    declarationText.forEach(text => {
-      const splitText = doc.splitTextToSize(text, 170);
-      checkPageBreak(splitText.length * 6);
-      doc.text(splitText, 20, currentY);
-      currentY += splitText.length * 6;
+    declarationTexts.forEach((text, i) => {
+      const splitText = doc.splitTextToSize(text, 164);
+      const itemHeight = Math.max(splitText.length * 5.5, 7);
+      checkPageBreak(itemHeight + 3);
+      
+      doc.setFont("helvetica", "bold");
+      doc.text(`${i + 1}.`, 20, currentY);
+      
+      doc.setFont("helvetica", "normal");
+      doc.text(splitText, 26, currentY);
+      
+      currentY += itemHeight + 2;
     });
-    currentY += 5;
+    currentY += 3;
 
     // Signatures
     checkPageBreak(45);
@@ -597,6 +825,34 @@ export default function App() {
   const handlePreview = async () => {
     const pdf = await generatePDF();
     setPdfPreview(pdf);
+  };
+
+  const viewPdf = async (path: string) => {
+    if (!supabase) return;
+    // Create a signed URL that expires in 60 seconds for security
+    const { data, error } = await supabase.storage
+      .from('validation-pdfs')
+      .createSignedUrl(path, 60);
+    
+    if (error) {
+      console.error('Error creating signed URL:', error);
+      return;
+    }
+
+    if (data?.signedUrl) {
+      window.open(data.signedUrl, '_blank');
+    }
+  };
+
+  const dataURIToBlob = (dataURI: string) => {
+    const byteString = atob(dataURI.split(',')[1]);
+    const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+    const ab = new ArrayBuffer(byteString.length);
+    const ia = new Uint8Array(ab);
+    for (let i = 0; i < byteString.length; i++) {
+      ia[i] = byteString.charCodeAt(i);
+    }
+    return new Blob([ab], { type: mimeString });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -643,6 +899,27 @@ export default function App() {
       // 1. Submit to Supabase (New)
       if (supabase) {
         try {
+          // Upload PDF to Supabase Storage
+          let pdfPath = null;
+          try {
+            const pdfBlob = dataURIToBlob(pdf);
+            const fileName = `${updatedData.premiseName.replace(/\s+/g, '_')}_${updatedData.validationPeriod.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
+            const { data: uploadData, error: uploadError } = await supabase.storage
+              .from('validation-pdfs')
+              .upload(fileName, pdfBlob, {
+                contentType: 'application/pdf',
+                upsert: false
+              });
+            
+            if (uploadError) {
+              console.error('Supabase PDF upload error:', uploadError);
+            } else {
+              pdfPath = uploadData.path;
+            }
+          } catch (uploadErr) {
+            console.error('PDF upload process failed:', uploadErr);
+          }
+
           const { error: supabaseError } = await supabase
             .from('kdb_validations')
             .insert([{
@@ -656,6 +933,7 @@ export default function App() {
               location: updatedData.location,
               county: updatedData.county,
               total_penalty: totalPenalty,
+              pdf_path: pdfPath, // Store the reference to the file
               raw_data: updatedData // Store full JSON for backup
             }]);
           
@@ -680,6 +958,10 @@ export default function App() {
         link.href = pdf;
         link.download = `KDB_Validation_${formData.dboName}_${formData.date}.pdf`;
         link.click();
+
+        // Clear local storage draft and manual override edits
+        localStorage.removeItem('kdb_validation_form_draft');
+        setIsValidationPeriodEdited(false);
 
         setFormData(initialData);
         setStep(0); // Go back to start
@@ -840,6 +1122,47 @@ export default function App() {
           <p className="text-[10px] font-medium text-gray-500 uppercase tracking-widest">Data Validation Form</p>
         </header>
 
+        {/* Draft Restore Alert */}
+        <AnimatePresence>
+          {hasDraft && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="mb-4 overflow-hidden"
+              id="draft-restore-alert"
+            >
+              <div className="p-4 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+                <div className="flex items-center gap-2.5">
+                  <span className="p-2 rounded-lg bg-amber-100 flex items-center justify-center text-amber-700">
+                    <FileText className="w-5 h-5" />
+                  </span>
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-amber-800">Unsaved Data Found</p>
+                    <p className="text-xs text-amber-700 font-medium">You have an unfinished validation draft. Would you like to restore it?</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 mt-2 sm:mt-0 self-end sm:self-auto shrink-0">
+                  <button
+                    onClick={handleRestoreDraft}
+                    className="px-3 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-[11px] font-bold shadow-sm transition-all cursor-pointer flex items-center gap-1"
+                    id="restore-draft-btn"
+                  >
+                    Restore Draft
+                  </button>
+                  <button
+                    onClick={handleDiscardDraft}
+                    className="px-3 py-1.5 rounded-lg border border-amber-200 bg-white hover:bg-amber-100 text-amber-700 text-[11px] font-bold transition-all cursor-pointer"
+                    id="discard-draft-btn"
+                  >
+                    Discard
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Global Status Message */}
         <AnimatePresence>
           {status.message && (
@@ -937,7 +1260,7 @@ export default function App() {
                         name="branch"
                         value={formData.branch}
                         onChange={handleChange}
-                        className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-sm"
+                        className={getInputClass('branch')}
                       />
                     </div>
                     <div className="grid grid-cols-2 gap-4">
@@ -948,7 +1271,7 @@ export default function App() {
                           name="date"
                           value={formData.date}
                           onChange={handleChange}
-                          className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-sm"
+                          className={getInputClass('date')}
                         />
                       </div>
                       <div className="space-y-2">
@@ -971,7 +1294,7 @@ export default function App() {
                         placeholder="KDB / ..."
                         value={formData.permitNo}
                         onChange={handleChange}
-                        className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-sm"
+                        className={getInputClass('permitNo')}
                       />
                     </div>
                     <div className="space-y-2">
@@ -981,7 +1304,7 @@ export default function App() {
                         name="expiryDate"
                         value={formData.expiryDate}
                         onChange={handleChange}
-                        className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-sm"
+                        className={getInputClass('expiryDate')}
                       />
                     </div>
 
@@ -992,9 +1315,88 @@ export default function App() {
                         name="dboName"
                         value={formData.dboName}
                         onChange={handleChange}
-                        className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-sm"
+                        className={getInputClass('dboName')}
                         placeholder="Enter DBO name..."
                       />
+                      {isCheckingDbo && (
+                        <p className="text-[10px] text-blue-500 font-medium mt-1 flex items-center gap-1 animate-pulse">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          Checking previous validations...
+                        </p>
+                      )}
+                      
+                      <AnimatePresence>
+                        {lastDboRecords.length > 0 && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="mt-2 p-3 bg-emerald-50/70 rounded-xl border border-emerald-100 space-y-2 overflow-hidden"
+                          >
+                            <p className="text-[10px] font-bold text-emerald-800 uppercase tracking-tight flex items-center gap-1">
+                              <Database className="w-3.5 h-3.5 text-emerald-600" />
+                              Previous Validations Found: Click to Autofill
+                            </p>
+                            <div className="flex flex-col gap-1.5 max-h-44 overflow-y-auto pr-1">
+                              {lastDboRecords.map((record, index) => {
+                                const raw = record.raw_data || {};
+                                const premise = record.premise_name || 'Unknown Premise';
+                                const category = record.category || 'Unknown';
+                                const location = record.location || 'Unknown';
+                                const pNo = record.permit_no || 'N/A';
+                                
+                                return (
+                                  <button
+                                    key={index}
+                                    type="button"
+                                    onClick={() => handleDboAutofill(record)}
+                                    className="w-full text-left p-2 rounded-lg bg-white border border-emerald-100 hover:border-emerald-300 hover:bg-emerald-50 transition-all text-[11px] group flex flex-col gap-0.5"
+                                  >
+                                    <div className="flex justify-between items-center w-full">
+                                      <span className="font-bold text-gray-800 group-hover:text-emerald-900 truncate">
+                                        {premise}
+                                      </span>
+                                      <span className="text-[9px] font-mono text-emerald-700 bg-emerald-100/50 px-1.5 py-0.5 rounded-md">
+                                        {category}
+                                      </span>
+                                    </div>
+                                    <div className="text-[10px] text-gray-500 flex justify-between items-center mt-0.5">
+                                      <span>Permit: {pNo} | Loc: {location}</span>
+                                      <span className="text-[9px] text-gray-400 font-mono italic">
+                                        {new Date(record.date).toLocaleDateString('default', { month: 'short', year: 'numeric' })}
+                                      </span>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
+                      {lastCollections.length > 0 && (() => {
+                        const latest = lastCollections[0].fullPeriod;
+                        const parts = latest.split(' ');
+                        if (parts.length >= 2) {
+                          const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+                          const monthIndex = months.indexOf(parts[0]);
+                          if (monthIndex !== -1) {
+                            let nextMonthIndex = monthIndex + 1;
+                            let nextYear = parseInt(parts[1]);
+                            if (nextMonthIndex > 11) {
+                              nextMonthIndex = 0;
+                              nextYear += 1;
+                            }
+                            return (
+                              <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-tight mt-1 flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3" />
+                                Next month to validate: {months[nextMonthIndex]} {nextYear}
+                              </p>
+                            );
+                          }
+                        }
+                        return null;
+                      })()}
                     </div>
                     <div className="space-y-2">
                       <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Premise Name</label>
@@ -1004,7 +1406,7 @@ export default function App() {
                           name="premiseName"
                           value={formData.premiseName}
                           onChange={handleChange}
-                          className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-sm pr-10"
+                          className={getInputClass('premiseName', 'pr-10')}
                           placeholder="Type premise name to check history..."
                         />
                         {isCheckingHistory && (
@@ -1037,13 +1439,24 @@ export default function App() {
                                 <p className="text-[11px] font-bold text-blue-800 uppercase tracking-tight">
                                   Recent History for {lastCollections[0]?.matchedPremise || formData.premiseName}
                                 </p>
-                                <p className="text-[10px] text-blue-600 mt-0.5">
+                                <div className="text-[10px] text-blue-600 mt-1 flex flex-wrap gap-x-2 gap-y-1">
                                   Last 3 validated months: {lastCollections.map((c, i) => (
-                                    <span key={i} className="font-semibold">
-                                      {c.displayString}{i < lastCollections.length - 1 ? ', ' : ''}
-                                    </span>
+                                    <div key={i} className="flex items-center gap-1">
+                                      <span className="font-semibold">{c.displayString}</span>
+                                      {c.pdfPath && (
+                                        <button
+                                          onClick={() => viewPdf(c.pdfPath!)}
+                                          className="text-[9px] bg-blue-100 hover:bg-blue-200 text-blue-700 px-1.5 py-0.5 rounded flex items-center gap-0.5 transition-colors"
+                                          title="View PDF"
+                                        >
+                                          <FileText className="w-2.5 h-2.5" />
+                                          PDF
+                                        </button>
+                                      )}
+                                      {i < lastCollections.length - 1 && <span className="text-blue-300">|</span>}
+                                    </div>
                                   ))}
-                                </p>
+                                </div>
                             </div>
                           </motion.div>
                         )}
@@ -1068,11 +1481,14 @@ export default function App() {
                       <button
                         key={cat}
                         type="button"
-                        onClick={() => setFormData(prev => ({ ...prev, category: cat }))}
+                        onClick={() => {
+                          setFormData(prev => ({ ...prev, category: cat }));
+                          setFailedFields(prev => prev.filter(f => f !== 'category'));
+                        }}
                         className={`px-4 py-2 rounded-lg text-xs font-bold border transition-all ${
                           formData.category === cat 
                             ? 'bg-blue-600 border-blue-600 text-white shadow-md' 
-                            : 'bg-white border-gray-200 text-gray-600 hover:border-blue-300'
+                            : `bg-white text-gray-600 hover:border-blue-300 ${failedFields.includes('category') ? 'border-red-500 bg-red-50/20 ring-2 ring-red-100' : 'border-gray-200'}`
                         }`}
                       >
                         {cat}
@@ -1089,7 +1505,7 @@ export default function App() {
                         name="contacts"
                         value={formData.contacts}
                         onChange={handleChange}
-                        className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-sm"
+                        className={getInputClass('contacts')}
                       />
                     </div>
                     <div className="space-y-2">
@@ -1099,7 +1515,7 @@ export default function App() {
                         name="validationPeriod"
                         value={formData.validationPeriod}
                         onChange={handleChange}
-                        className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-sm"
+                        className={getInputClass('validationPeriod')}
                       />
                     </div>
                     <div className="space-y-2">
@@ -1109,7 +1525,7 @@ export default function App() {
                         name="county"
                         value={formData.county}
                         onChange={handleChange}
-                        className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-xs"
+                        className={getInputClass('county', '', 'px-4 py-2 rounded-xl text-xs')}
                       />
                     </div>
                     <div className="space-y-2">
@@ -1119,7 +1535,7 @@ export default function App() {
                         name="location"
                         value={formData.location}
                         onChange={handleChange}
-                        className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all outline-none text-xs"
+                        className={getInputClass('location', '', 'px-4 py-2 rounded-xl text-xs')}
                       />
                     </div>
                   </div>
@@ -1184,8 +1600,13 @@ export default function App() {
                                   const newIntakes = [...formData.intakes];
                                   newIntakes[idx].month = e.target.value;
                                   setFormData(prev => ({ ...prev, intakes: newIntakes }));
+                                  setFailedFields(prev => prev.filter(f => f !== `intake-${idx}-month`));
                                 }}
-                                className="w-full px-3 py-1.5 rounded-lg border border-gray-200 outline-none text-[11px] bg-white"
+                                className={`w-full px-3 py-1.5 rounded-lg border outline-none text-[11px] bg-white transition-all ${
+                                  failedFields.includes(`intake-${idx}-month`)
+                                    ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20'
+                                    : 'border-gray-200 focus:border-blue-500'
+                                }`}
                               >
                                 {months.map(m => <option key={m} value={m}>{m}</option>)}
                               </select>
@@ -1198,8 +1619,13 @@ export default function App() {
                                   const newIntakes = [...formData.intakes];
                                   newIntakes[idx].year = e.target.value;
                                   setFormData(prev => ({ ...prev, intakes: newIntakes }));
+                                  setFailedFields(prev => prev.filter(f => f !== `intake-${idx}-year`));
                                 }}
-                                className="w-full px-3 py-1.5 rounded-lg border border-gray-200 outline-none text-[11px] bg-white"
+                                className={`w-full px-3 py-1.5 rounded-lg border outline-none text-[11px] bg-white transition-all ${
+                                  failedFields.includes(`intake-${idx}-year`)
+                                    ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20'
+                                    : 'border-gray-200 focus:border-blue-500'
+                                }`}
                               >
                                 {years.map(y => <option key={y} value={y}>{y}</option>)}
                               </select>
@@ -1219,8 +1645,13 @@ export default function App() {
                                     newIntakes[idx].avgVolPerDay = (num / 30).toFixed(2);
                                   }
                                   setFormData(prev => ({ ...prev, intakes: newIntakes }));
+                                  setFailedFields(prev => prev.filter(f => f !== `intake-${idx}-quantity`));
                                 }}
-                                className="w-full px-3 py-1.5 rounded-lg border border-gray-200 outline-none text-[11px]"
+                                className={`w-full px-3 py-1.5 rounded-lg border outline-none text-[11px] transition-all ${
+                                  failedFields.includes(`intake-${idx}-quantity`)
+                                    ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20'
+                                    : 'border-gray-200 focus:border-blue-500'
+                                }`}
                               />
                             </div>
                             <div className="space-y-1">
@@ -1232,8 +1663,13 @@ export default function App() {
                                   const newIntakes = [...formData.intakes];
                                   newIntakes[idx].farmerPrice = e.target.value;
                                   setFormData(prev => ({ ...prev, intakes: newIntakes }));
+                                  setFailedFields(prev => prev.filter(f => f !== `intake-${idx}-farmerPrice`));
                                 }}
-                                className="w-full px-3 py-1.5 rounded-lg border border-gray-200 outline-none text-[11px]"
+                                className={`w-full px-3 py-1.5 rounded-lg border outline-none text-[11px] transition-all ${
+                                  failedFields.includes(`intake-${idx}-farmerPrice`)
+                                    ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20'
+                                    : 'border-gray-200 focus:border-blue-500'
+                                }`}
                               />
                             </div>
                             <div className="space-y-1">
@@ -1245,8 +1681,13 @@ export default function App() {
                                   const newIntakes = [...formData.intakes];
                                   newIntakes[idx].processor = e.target.value;
                                   setFormData(prev => ({ ...prev, intakes: newIntakes }));
+                                  setFailedFields(prev => prev.filter(f => f !== `intake-${idx}-processor`));
                                 }}
-                                className="w-full px-3 py-1.5 rounded-lg border border-gray-200 outline-none text-[11px]"
+                                className={`w-full px-3 py-1.5 rounded-lg border outline-none text-[11px] transition-all ${
+                                  failedFields.includes(`intake-${idx}-processor`)
+                                    ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20'
+                                    : 'border-gray-200 focus:border-blue-500'
+                                }`}
                               />
                             </div>
                             <div className="space-y-1">
@@ -1258,8 +1699,13 @@ export default function App() {
                                   const newIntakes = [...formData.intakes];
                                   newIntakes[idx].processorPrice = e.target.value;
                                   setFormData(prev => ({ ...prev, intakes: newIntakes }));
+                                  setFailedFields(prev => prev.filter(f => f !== `intake-${idx}-processorPrice`));
                                 }}
-                                className="w-full px-3 py-1.5 rounded-lg border border-gray-200 outline-none text-[11px]"
+                                className={`w-full px-3 py-1.5 rounded-lg border outline-none text-[11px] transition-all ${
+                                  failedFields.includes(`intake-${idx}-processorPrice`)
+                                    ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20'
+                                    : 'border-gray-200 focus:border-blue-500'
+                                }`}
                               />
                             </div>
                             <div className="space-y-1">
@@ -1345,8 +1791,13 @@ export default function App() {
                                 const newSales = [...formData.sales];
                                 newSales[idx].month = e.target.value;
                                 setFormData(prev => ({ ...prev, sales: newSales }));
+                                setFailedFields(prev => prev.filter(f => f !== `sale-${idx}-month`));
                               }}
-                              className="w-full px-3 py-1.5 rounded-xl border border-blue-100 focus:border-blue-500 outline-none text-[11px] font-bold text-blue-600 appearance-none bg-white"
+                              className={`w-full px-3 py-1.5 rounded-xl border outline-none text-[11px] font-bold appearance-none bg-white transition-all ${
+                                failedFields.includes(`sale-${idx}-month`)
+                                  ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20 text-red-600'
+                                  : 'border-blue-100 focus:border-blue-500 text-blue-600'
+                              }`}
                             >
                               {months.map(m => <option key={m} value={m}>{m}</option>)}
                             </select>
@@ -1359,8 +1810,13 @@ export default function App() {
                                 const newSales = [...formData.sales];
                                 newSales[idx].year = e.target.value;
                                 setFormData(prev => ({ ...prev, sales: newSales }));
+                                setFailedFields(prev => prev.filter(f => f !== `sale-${idx}-year`));
                               }}
-                              className="w-full px-3 py-1.5 rounded-xl border border-blue-100 focus:border-blue-500 outline-none text-[11px] font-bold text-blue-600 appearance-none bg-white"
+                              className={`w-full px-3 py-1.5 rounded-xl border outline-none text-[11px] font-bold appearance-none bg-white transition-all ${
+                                failedFields.includes(`sale-${idx}-year`)
+                                  ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20 text-red-600'
+                                  : 'border-blue-100 focus:border-blue-500 text-blue-600'
+                              }`}
                             >
                               {years.map(y => <option key={y} value={y}>{y}</option>)}
                             </select>
@@ -1399,6 +1855,20 @@ export default function App() {
                                         const newSales = [...formData.sales];
                                         (newSales[idx] as any)[row.name] = val;
                                         
+                                        // Mirror qtyDeclared to verifiedQty, but allow independent edit
+                                        if (row.name === 'qtyDeclared') {
+                                          newSales[idx].verifiedQty = val;
+                                          const num = parseFloat(val);
+                                          if (!isNaN(num)) {
+                                            newSales[idx].avgVolPerDay = (num / 30).toFixed(2);
+                                          }
+                                          // Clear both from failedFields
+                                          setFailedFields(prev => prev.filter(f => f !== `sale-${idx}-qtyDeclared` && f !== `sale-${idx}-verifiedQty`));
+                                        } else {
+                                          // Clear current from failedFields
+                                          setFailedFields(prev => prev.filter(f => f !== `sale-${idx}-${row.name}`));
+                                        }
+                                        
                                         // Formula for Avg Volume per Day based on Verified Quantity
                                         if (row.name === 'verifiedQty') {
                                           const num = parseFloat(val);
@@ -1409,7 +1879,13 @@ export default function App() {
                                         
                                         setFormData(prev => ({ ...prev, sales: newSales }));
                                       }}
-                                      className={`w-full px-3 py-1.5 rounded-lg border outline-none text-xs ${row.readOnly || row.name === 'avgVolPerDay' ? 'bg-gray-50 border-gray-50 text-blue-600 font-bold' : 'border-gray-50 focus:border-blue-500'}`}
+                                      className={`w-full px-3 py-1.5 rounded-lg border outline-none text-xs transition-all ${
+                                        row.readOnly || row.name === 'avgVolPerDay' 
+                                          ? 'bg-gray-50 border-gray-50 text-blue-600 font-bold' 
+                                          : failedFields.includes(`sale-${idx}-${row.name}`)
+                                            ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20 text-red-600 font-bold'
+                                            : 'border-gray-50 focus:border-blue-500'
+                                      }`}
                                     />
                                   </td>
                                 </tr>
@@ -1441,7 +1917,7 @@ export default function App() {
                         ))}
                       </div>
                     </div>
-                    <div className="space-y-2">
+                     <div className={`space-y-2 p-2.5 rounded-2xl transition-all ${failedFields.includes('natureOfProduce') ? 'bg-red-50/50 border border-red-300 ring-2 ring-red-100' : 'border border-transparent'}`}>
                       <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Nature of Produce?</label>
                       <div className="grid grid-cols-2 gap-2">
                         {['Pasteurized Milk', 'Raw Milk', 'Cultured Milk', 'Yoghurt'].map(opt => (
@@ -1454,6 +1930,7 @@ export default function App() {
                                   ? [...formData.natureOfProduce, opt]
                                   : formData.natureOfProduce.filter(p => p !== opt);
                                 setFormData(prev => ({ ...prev, natureOfProduce: newProduce }));
+                                setFailedFields(prev => prev.filter(f => f !== 'natureOfProduce'));
                               }}
                               className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                             />
@@ -1469,7 +1946,11 @@ export default function App() {
                         name="source"
                         value={formData.source}
                         onChange={handleChange}
-                        className="w-full px-4 py-2 rounded-xl border border-gray-200 focus:border-blue-500 outline-none text-xs"
+                        className={`w-full px-4 py-2 rounded-xl border outline-none text-xs transition-all ${
+                          failedFields.includes('source')
+                            ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20'
+                            : 'border-gray-200 focus:border-blue-500'
+                        }`}
                       />
                     </div>
                   </div>
@@ -1587,7 +2068,31 @@ export default function App() {
                   <div className="bg-white p-6 rounded-2xl border border-gray-100 space-y-4">
                     <h3 className="text-sm font-bold text-gray-900">Declarations</h3>
                     <div className="space-y-3">
-                      <label className="flex items-start gap-3 cursor-pointer group">
+                      {/* Accept All Declarations */}
+                      <label className="flex items-center gap-3 cursor-pointer group pb-3 border-b border-gray-100">
+                        <div className="relative flex items-center">
+                          <input
+                            type="checkbox"
+                            checked={declarations.accurate && declarations.offense && declarations.agreement && declarations.awareness}
+                            onChange={(e) => {
+                              const val = e.target.checked;
+                              setDeclarations({
+                                accurate: val,
+                                offense: val,
+                                agreement: val,
+                                awareness: val
+                              });
+                            }}
+                            className="peer h-5 w-5 cursor-pointer appearance-none rounded-md border border-gray-300 transition-all checked:border-emerald-600 checked:bg-emerald-600"
+                          />
+                          <CheckCircle2 className="absolute h-3.5 w-3.5 text-white opacity-0 peer-checked:opacity-100 left-0.5" />
+                        </div>
+                        <span className="text-xs font-bold text-gray-800 leading-relaxed group-hover:text-emerald-700 transition-colors">
+                          Accept All Declarations
+                        </span>
+                      </label>
+
+                      <label className="flex items-start gap-3 cursor-pointer group pt-1">
                         <div className="relative flex items-center mt-0.5">
                           <input
                             type="checkbox"
