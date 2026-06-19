@@ -259,6 +259,139 @@ export default function App() {
         if (data) {
           const allExtractedMonths: { period: string; pdfPath?: string; score: number }[] = [];
           
+          const extractPeriodsFromString = (str: string): { period: string; score: number }[] => {
+            if (!str) return [];
+            const results: { period: string; score: number }[] = [];
+            
+            const fullMonths = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+            const shortMonths = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+            
+            // Clean up and lowercase to keep parsing simple
+            const cleanStr = str.toLowerCase().replace(/[^a-z0-9]/g, ' ');
+            const words = cleanStr.split(/\s+/).filter(Boolean);
+            
+            // Find 4-digit years or 2-digit years
+            const years: number[] = [];
+            words.forEach(w => {
+              const num = parseInt(w, 10);
+              if (!isNaN(num)) {
+                if (num >= 2000 && num <= 2100) {
+                  years.push(num);
+                } else if (num >= 20 && num <= 99 && w.length === 2) {
+                  years.push(2000 + num);
+                }
+              }
+            });
+
+            const defaultYear = years.length > 0 ? years[years.length - 1] : new Date().getFullYear();
+            
+            // Find all month words
+            const foundMonths: { name: string; index: number; wordPosition: number }[] = [];
+            words.forEach((w, idx) => {
+              let mIdx = fullMonths.indexOf(w);
+              if (mIdx === -1) {
+                if (w === 'sept') {
+                  mIdx = 8;
+                } else {
+                  mIdx = shortMonths.indexOf(w);
+                }
+              }
+              if (mIdx !== -1) {
+                foundMonths.push({
+                  name: fullMonths[mIdx],
+                  index: mIdx,
+                  wordPosition: idx
+                });
+              }
+            });
+
+            if (foundMonths.length === 0) {
+              return [];
+            }
+
+            const isRange = str.includes('-') || str.toLowerCase().includes('to') || str.toLowerCase().includes('through');
+            
+            // Handle cross-year and single-year ranges like "Oct - Dec 24" or "Oct 24 to Feb 25"
+            if (foundMonths.length === 2 && isRange) {
+              const m1 = foundMonths[0];
+              const m2 = foundMonths[1];
+              
+              const getYearForMonth = (wordPos: number) => {
+                if (years.length === 0) return defaultYear;
+                let closestYear = years[0];
+                let minDistance = Infinity;
+                words.forEach((w, wIdx) => {
+                  const num = parseInt(w, 10);
+                  if (!isNaN(num)) {
+                    let yVal = num;
+                    if (num >= 20 && num <= 99 && w.length === 2) {
+                      yVal = 2000 + num;
+                    }
+                    if (yVal >= 2000 && yVal <= 2100) {
+                      const dist = Math.abs(wIdx - wordPos);
+                      if (dist < minDistance) {
+                        minDistance = dist;
+                        closestYear = yVal;
+                      }
+                    }
+                  }
+                });
+                return closestYear;
+              };
+
+              const y1 = getYearForMonth(m1.wordPosition);
+              const y2 = getYearForMonth(m2.wordPosition);
+              const score1 = y1 * 12 + m1.index;
+              const score2 = y2 * 12 + m2.index;
+              
+              if (score1 <= score2) {
+                for (let s = score1; s <= score2; s++) {
+                  const y = Math.floor(s / 12);
+                  const mIdx = s % 12;
+                  const monthName = fullMonths[mIdx];
+                  const capMonthName = monthName.charAt(0).toUpperCase() + monthName.slice(1);
+                  results.push({
+                    period: `${capMonthName} ${y}`,
+                    score: s
+                  });
+                }
+                return results;
+              }
+            }
+
+            // Normal individual mapping
+            foundMonths.forEach((m) => {
+              let associatedYear = defaultYear;
+              if (years.length > 0) {
+                let minDistance = Infinity;
+                words.forEach((w, wIdx) => {
+                  const num = parseInt(w, 10);
+                  if (!isNaN(num)) {
+                    let yVal = num;
+                    if (num >= 20 && num <= 99 && w.length === 2) {
+                      yVal = 2000 + num;
+                    }
+                    if (yVal >= 2000 && yVal <= 2100) {
+                      const dist = Math.abs(wIdx - m.wordPosition);
+                      if (dist < minDistance) {
+                        minDistance = dist;
+                        associatedYear = yVal;
+                      }
+                    }
+                  }
+                });
+              }
+
+              const capMonthName = m.name.charAt(0).toUpperCase() + m.name.slice(1);
+              results.push({
+                period: `${capMonthName} ${associatedYear}`,
+                score: associatedYear * 12 + m.index
+              });
+            });
+
+            return results;
+          };
+
           data.forEach(item => {
             const raw = item.raw_data as any;
             const periodsInThisRecord: string[] = [];
@@ -286,20 +419,12 @@ export default function App() {
               periodsInThisRecord.push(item.validation_period);
             }
             
-            // Score each period
+            // Score and parse each period
             periodsInThisRecord.forEach(p => {
-              const normalized = p.trim();
-              const parts = normalized.toLowerCase().split(/\s+/);
-              if (parts.length >= 2) {
-                const monthStr = parts[0];
-                const year = parseInt(parts[1], 10);
-                const months = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
-                const monthIndex = months.indexOf(monthStr);
-                if (monthIndex !== -1 && !isNaN(year)) {
-                  const score = year * 12 + monthIndex;
-                  allExtractedMonths.push({ period: normalized, pdfPath: item.pdf_path, score });
-                }
-              }
+              const parsed = extractPeriodsFromString(p);
+              parsed.forEach(res => {
+                allExtractedMonths.push({ period: res.period, pdfPath: item.pdf_path, score: res.score });
+              });
             });
           });
 
