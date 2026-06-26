@@ -155,13 +155,67 @@ export default function App() {
   const [declarations, setDeclarations] = useState({
     accurate: false,
     offense: false,
-    agreement: false,
     awareness: false
   });
 
   const [isValidationPeriodEdited, setIsValidationPeriodEdited] = useState(false);
   const [hasDraft, setHasDraft] = useState(false);
   const [failedFields, setFailedFields] = useState<string[]>([]);
+
+  const [globalUnit, setGlobalUnit] = useState<'L' | 'Kg'>('L');
+
+  const handleGlobalUnitChange = (targetUnit: 'L' | 'Kg') => {
+    if (globalUnit === targetUnit) return;
+
+    const conversionFactor = targetUnit === 'Kg' ? 1.03 : (1 / 1.03);
+
+    setFormData(prev => {
+      // Convert intakes quantity
+      const updatedIntakes = prev.intakes.map(intake => {
+        const qty = parseFloat(intake.quantity);
+        if (isNaN(qty) || intake.quantity.trim() === '') return intake;
+        const convertedQty = (qty * conversionFactor).toFixed(2).replace(/\.?0+$/, '');
+        const convertedAvg = (parseFloat(convertedQty) / 30).toFixed(2).replace(/\.?0+$/, '');
+        return {
+          ...intake,
+          quantity: convertedQty,
+          avgVolPerDay: convertedAvg
+        };
+      });
+
+      // Convert sales quantities
+      const updatedSales = prev.sales.map(sale => {
+        const convertField = (val: string) => {
+          const num = parseFloat(val);
+          if (isNaN(num) || val.trim() === '') return val;
+          return (num * conversionFactor).toFixed(2).replace(/\.?0+$/, '');
+        };
+
+        const qtyDeclared = convertField(sale.qtyDeclared);
+        const verifiedQty = convertField(sale.verifiedQty);
+        const projectedQty = convertField(sale.projectedQty);
+        const underDeclared = convertField(sale.underDeclared);
+        const avgVolPerDay = (parseFloat(verifiedQty) / 30).toFixed(2).replace(/\.?0+$/, '');
+
+        return {
+          ...sale,
+          qtyDeclared,
+          verifiedQty,
+          projectedQty,
+          underDeclared,
+          avgVolPerDay
+        };
+      });
+
+      return {
+        ...prev,
+        intakes: updatedIntakes,
+        sales: updatedSales
+      };
+    });
+
+    setGlobalUnit(targetUnit);
+  };
 
   const getInputClass = (name: string, extraClasses: string = '', basePadding: string = 'px-4 py-2 rounded-xl') => {
     const isFailed = failedFields.includes(name);
@@ -172,12 +226,23 @@ export default function App() {
   };
 
   useEffect(() => {
-    // Auto calculate under declared volume for each sales entry
+    // Auto calculate under declared volume and mirror farmerPrice to buyingPrice for each sales entry
     const updatedSales = formData.sales.map(sale => {
       const declared = parseFloat(sale.qtyDeclared) || 0;
       const verified = parseFloat(sale.verifiedQty) || 0;
       const diff = Math.max(0, verified - declared);
-      return { ...sale, underDeclared: diff.toString() };
+      
+      // Mirror farmerPrice to buyingPrice if there is a matching intake month and year
+      const match = formData.intakes.find(
+        i => i.month && i.year && i.month === sale.month && i.year === sale.year
+      );
+      const buyingPrice = match ? match.farmerPrice : sale.buyingPrice;
+
+      return { 
+        ...sale, 
+        underDeclared: diff.toString(),
+        buyingPrice
+      };
     });
 
     // Auto populate non-compliance based on under-declaration
@@ -209,7 +274,7 @@ export default function App() {
         nonCompliance: newNonCompliance 
       }));
     }
-  }, [formData.sales]);
+  }, [formData.sales, formData.intakes]);
 
   const totalPenalty = formData.nonCompliance.reduce((sum, nc) => sum + (parseFloat(nc.amount) || 0), 0);
 
@@ -522,12 +587,16 @@ export default function App() {
         setHasDraft(true);
       } catch (e) {
         localStorage.removeItem('kdb_validation_form_draft');
+        localStorage.removeItem('kdb_validation_form_draft_step');
       }
     }
   }, []);
 
   // Save draft when form data changes
   useEffect(() => {
+    // Prevent overwriting existing draft on page load before user decides to restore/discard it
+    if (hasDraft) return;
+
     const hasPopulatedInput = 
       formData.dboName || 
       formData.premiseName || 
@@ -538,8 +607,9 @@ export default function App() {
 
     if (hasPopulatedInput) {
       localStorage.setItem('kdb_validation_form_draft', JSON.stringify(formData));
+      localStorage.setItem('kdb_validation_form_draft_step', step.toString());
     }
-  }, [formData]);
+  }, [formData, step, hasDraft]);
 
   const handleRestoreDraft = () => {
     const draft = localStorage.getItem('kdb_validation_form_draft');
@@ -548,8 +618,13 @@ export default function App() {
         const parsed = JSON.parse(draft);
         setFormData(parsed);
         setFailedFields([]);
-        // Re-eval step based on draft data
-        if (parsed.branch) setStep(1); // Resume at step 1 if the user started
+        // Restore step from localStorage if available, otherwise fallback
+        const savedStep = localStorage.getItem('kdb_validation_form_draft_step');
+        if (savedStep) {
+          setStep(parseInt(savedStep, 10));
+        } else if (parsed.branch) {
+          setStep(1); // Resume at step 1 if the user started
+        }
         setStatus({ type: 'success', message: 'Unsaved draft successfully restored!' });
       } catch (e) {
         console.error(e);
@@ -560,6 +635,7 @@ export default function App() {
 
   const handleDiscardDraft = () => {
     localStorage.removeItem('kdb_validation_form_draft');
+    localStorage.removeItem('kdb_validation_form_draft_step');
     setHasDraft(false);
     setStatus({ type: 'success', message: 'Draft cleared.' });
   };
@@ -808,7 +884,7 @@ export default function App() {
       doc.text("Total Monthly Intakes", 20, currentY);
       autoTable(doc, {
         startY: currentY + 5,
-        head: [['Month/Year', 'Qty', 'Farmer Price', 'Processor', 'Proc. Price', 'Avg Collection/Day']],
+        head: [['Month/Year', `Qty (${globalUnit})`, 'Farmer Price', 'Processor', 'Proc. Price', `Avg Collection/Day (${globalUnit}/Day)`]],
         body: data.intakes.map(i => [`${i.month} ${i.year}`, i.quantity, i.farmerPrice, i.processor, i.processorPrice, i.avgVolPerDay]),
         styles: { fontSize: 8 }
       });
@@ -825,7 +901,7 @@ export default function App() {
       doc.setFont("helvetica", "normal");
       autoTable(doc, {
         startY: currentY + 5,
-        head: [['Month/Year', 'Declared', 'Verified', 'Projected', 'Under Declared', 'Buying Price', 'Selling Price', 'Avg Vol/Day']],
+        head: [['Month/Year', `Declared (${globalUnit})`, `Verified (${globalUnit})`, `Projected (${globalUnit})`, `Under Declared (${globalUnit})`, 'Buying Price', 'Selling Price', `Avg Vol/Day (${globalUnit}/Day)`]],
         body: data.sales.map(s => [`${s.month} ${s.year}`, s.qtyDeclared, s.verifiedQty, s.projectedQty, s.underDeclared, s.buyingPrice, s.sellingPrice, s.avgVolPerDay]),
         styles: { fontSize: 7 }
       });
@@ -864,7 +940,7 @@ export default function App() {
     } else {
       autoTable(doc, {
         startY: currentY + 5,
-        head: [['CSL Period (Month/Year)', 'Litres', 'Amount (Kshs)', 'Month/Year to Pay', 'MPESA REF']],
+        head: [['CSL Period (Month/Year)', globalUnit === 'L' ? 'Litres' : 'Kilograms', 'Amount (Kshs)', 'Month/Year to Pay', 'MPESA REF']],
         body: [
           ...data.nonCompliance.map(nc => [nc.month, nc.litres, nc.amount, nc.paymentMonthYear, nc.mpesaRef]),
           [{ content: 'TOTAL', styles: { fontStyle: 'bold' } }, '', { content: totalPenalty.toFixed(2), styles: { fontStyle: 'bold' } }, '', '']
@@ -892,10 +968,10 @@ export default function App() {
     doc.text("Declarations:", 20, currentY);
     doc.setFont("helvetica", "normal");
     currentY += 7;
+    const hasUnderDeclaration = data.sales.some(sale => (parseFloat(sale.underDeclared) || 0) > 0);
     const declarationTexts = [
       "I/We confirm that the information provided is true and accurate to the best of my/our knowledge.",
-      "I/We understand that under-declaration of milk volumes is an offense under the Dairy Industry Act.",
-      "I/We agree to pay the calculated penalty amounts within the specified periods.",
+      ...(hasUnderDeclaration ? ["I/We understand that under-declaration of milk volumes is an offense under the Dairy Industry Act and agree to pay the calculated under declared volumes and monies within the specified periods."] : []),
       "I/We confirm that I/We have been informed/presented with, read and understood the KDB Premise Inspection Scope Disclosure, including the legal obligations to maintain records and traceability of the same as stipulated under the Dairy Industry Act (Cap 336), Laws of Kenya."
     ];
     declarationTexts.forEach((text, i) => {
@@ -1000,8 +1076,11 @@ export default function App() {
       setIsSubmitting(false);
       return;
     }
-    if (!declarations.accurate || !declarations.offense || !declarations.agreement || !declarations.awareness) {
-      setStatus({ type: 'error', message: 'Please check all declaration boxes below before submitting.' });
+    const hasUnderDeclaration = formData.sales.some(sale => (parseFloat(sale.underDeclared) || 0) > 0);
+    const isOffenseRequired = hasUnderDeclaration;
+
+    if (!declarations.accurate || (isOffenseRequired && !declarations.offense) || !declarations.awareness) {
+      setStatus({ type: 'error', message: 'Please check all required declaration boxes below before submitting.' });
       setIsSubmitting(false);
       return;
     }
@@ -1086,6 +1165,7 @@ export default function App() {
 
         // Clear local storage draft and manual override edits
         localStorage.removeItem('kdb_validation_form_draft');
+        localStorage.removeItem('kdb_validation_form_draft_step');
         setIsValidationPeriodEdited(false);
 
         setFormData(initialData);
@@ -1686,9 +1766,37 @@ export default function App() {
                   exit={{ opacity: 0, x: -20 }}
                   className="space-y-8"
                 >
-                  <div className="flex items-center gap-2 mb-6">
-                    <div className="w-8 h-8 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center font-bold text-sm">2</div>
-                    <h2 className="text-lg font-bold">Volume & Sales Data</h2>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center font-bold text-sm">2</div>
+                      <h2 className="text-lg font-bold">Volume & Sales Data</h2>
+                    </div>
+                    {/* General Unit Toggle */}
+                    <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl border border-gray-200 w-fit">
+                      <span className="text-[10px] font-bold text-gray-500 uppercase px-2">Active Unit:</span>
+                      <button
+                        type="button"
+                        onClick={() => handleGlobalUnitChange('L')}
+                        className={`px-3 py-1 text-xs font-bold rounded-lg cursor-pointer transition-all ${
+                          globalUnit === 'L'
+                            ? 'bg-blue-600 text-white shadow-xs'
+                            : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                      >
+                        Litres (L)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleGlobalUnitChange('Kg')}
+                        className={`px-3 py-1 text-xs font-bold rounded-lg cursor-pointer transition-all ${
+                          globalUnit === 'Kg'
+                            ? 'bg-blue-600 text-white shadow-xs'
+                            : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                      >
+                        Kilograms (Kg)
+                      </button>
+                    </div>
                   </div>
 
                   {/* Dynamic Intake Section - Conditional based on category */}
@@ -1707,15 +1815,13 @@ export default function App() {
                       
                       {formData.intakes.map((intake, idx) => (
                         <div key={idx} className="p-6 bg-gray-50 rounded-2xl border border-gray-100 space-y-4 relative">
-                          {idx > 0 && (
                             <button 
                               type="button"
                               onClick={() => setFormData(prev => ({ ...prev, intakes: prev.intakes.filter((_, i) => i !== idx) }))}
-                              className="absolute top-4 right-4 text-gray-400 hover:text-red-500"
+                              className="absolute top-4 right-4 text-gray-400 hover:text-red-500 text-lg font-bold"
                             >
                               &times;
                             </button>
-                          )}
                           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                             <div className="space-y-1">
                               <label className="text-[9px] font-bold text-gray-400 uppercase">Month</label>
@@ -1756,7 +1862,7 @@ export default function App() {
                               </select>
                             </div>
                             <div className="space-y-1">
-                              <label className="text-[9px] font-bold text-gray-400 uppercase">Quantity (Litres)</label>
+                              <label className="text-[9px] font-bold text-gray-400 uppercase">Quantity ({globalUnit})</label>
                               <input
                                 placeholder="0.00"
                                 value={intake.quantity}
@@ -1834,7 +1940,7 @@ export default function App() {
                               />
                             </div>
                             <div className="space-y-1">
-                              <label className="text-[9px] font-bold text-gray-400 uppercase">Average Collection/Day (Litres/Kgs)</label>
+                              <label className="text-[9px] font-bold text-gray-400 uppercase">Average Collection/Day ({globalUnit}/Day)</label>
                               <input
                                 placeholder="0.00"
                                 value={intake.avgVolPerDay}
@@ -1897,15 +2003,13 @@ export default function App() {
                     ) : (
                       formData.sales.map((sale, idx) => (
                         <div key={idx} className="p-6 bg-white rounded-2xl border border-gray-200 space-y-4 relative shadow-sm">
-                        {idx > 0 && (
                           <button 
                             type="button"
                             onClick={() => setFormData(prev => ({ ...prev, sales: prev.sales.filter((_, i) => i !== idx) }))}
-                            className="absolute top-4 right-4 text-gray-400 hover:text-red-500"
+                            className="absolute top-4 right-4 text-gray-400 hover:text-red-500 text-lg font-bold"
                           >
                             &times;
                           </button>
-                        )}
                         
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div className="space-y-1">
@@ -1959,62 +2063,71 @@ export default function App() {
                             </thead>
                             <tbody className="divide-y divide-gray-50">
                               {[
-                                { label: 'Quantity Declared', name: 'qtyDeclared', unit: 'Litres' },
-                                { label: 'Witnessed/Verified Quantity', name: 'verifiedQty', unit: 'Litres' },
-                                { label: 'Projected Quantity for Month', name: 'projectedQty', unit: 'Litres' },
-                                { label: 'Under Declared Volume (Auto)', name: 'underDeclared', unit: 'Litres', readOnly: true },
+                                { label: 'Quantity Declared', name: 'qtyDeclared', unit: globalUnit === 'L' ? 'Litres' : 'Kgs' },
+                                { label: 'Witnessed/Verified Quantity', name: 'verifiedQty', unit: globalUnit === 'L' ? 'Litres' : 'Kgs' },
+                                { label: 'Projected Quantity for Month', name: 'projectedQty', unit: globalUnit === 'L' ? 'Litres' : 'Kgs' },
+                                { label: 'Under Declared Volume (Auto)', name: 'underDeclared', unit: globalUnit === 'L' ? 'Litres' : 'Kgs', readOnly: true },
                                 { label: 'Buying Price (Per Records)', name: 'buyingPrice', unit: 'Kshs' },
                                 { label: 'Selling Price (Per Records)', name: 'sellingPrice', unit: 'Kshs' },
-                                { label: 'Avg Volume per Day', name: 'avgVolPerDay', unit: 'Litres' },
-                              ].map((row) => (
-                                <tr key={row.name}>
-                                  <td className="p-3 text-xs font-medium text-gray-700">{row.label}</td>
-                                  <td className="p-3 text-[10px] text-gray-400">{row.unit}</td>
-                                  <td className="p-1">
-                                    <input
-                                      type="text"
-                                      readOnly={row.readOnly}
-                                      value={(sale as any)[row.name]}
-                                      onChange={(e) => {
-                                        const val = e.target.value;
-                                        const newSales = [...formData.sales];
-                                        (newSales[idx] as any)[row.name] = val;
-                                        
-                                        // Mirror qtyDeclared to verifiedQty, but allow independent edit
-                                        if (row.name === 'qtyDeclared') {
-                                          newSales[idx].verifiedQty = val;
-                                          const num = parseFloat(val);
-                                          if (!isNaN(num)) {
-                                            newSales[idx].avgVolPerDay = (num / 30).toFixed(2);
+                                { label: 'Avg Volume per Day', name: 'avgVolPerDay', unit: globalUnit === 'L' ? 'Litres' : 'Kgs' },
+                              ].map((row) => {
+                                const hasMatchingIntake = row.name === 'buyingPrice' && formData.intakes.some(
+                                  i => i.month && i.year && i.month === sale.month && i.year === sale.year
+                                );
+                                const isReadOnly = row.readOnly || hasMatchingIntake;
+                                const label = hasMatchingIntake ? 'Buying Price (Mirrored)' : row.label;
+
+                                return (
+                                  <tr key={row.name}>
+                                    <td className={`p-3 text-xs font-medium ${hasMatchingIntake ? 'text-blue-600 font-bold' : 'text-gray-700'}`}>{label}</td>
+                                    <td className="p-3 text-[10px] text-gray-400">{row.unit}</td>
+                                    <td className="p-1">
+                                      <input
+                                        type="text"
+                                        readOnly={isReadOnly}
+                                        value={(sale as any)[row.name]}
+                                        onChange={(e) => {
+                                          if (isReadOnly) return;
+                                          const val = e.target.value;
+                                          const newSales = [...formData.sales];
+                                          (newSales[idx] as any)[row.name] = val;
+                                          
+                                          // Mirror qtyDeclared to verifiedQty, but allow independent edit
+                                          if (row.name === 'qtyDeclared') {
+                                            newSales[idx].verifiedQty = val;
+                                            const num = parseFloat(val);
+                                            if (!isNaN(num)) {
+                                              newSales[idx].avgVolPerDay = (num / 30).toFixed(2);
+                                            }
+                                            // Clear both from failedFields
+                                            setFailedFields(prev => prev.filter(f => f !== `sale-${idx}-qtyDeclared` && f !== `sale-${idx}-verifiedQty`));
+                                          } else {
+                                            // Clear current from failedFields
+                                            setFailedFields(prev => prev.filter(f => f !== `sale-${idx}-${row.name}`));
                                           }
-                                          // Clear both from failedFields
-                                          setFailedFields(prev => prev.filter(f => f !== `sale-${idx}-qtyDeclared` && f !== `sale-${idx}-verifiedQty`));
-                                        } else {
-                                          // Clear current from failedFields
-                                          setFailedFields(prev => prev.filter(f => f !== `sale-${idx}-${row.name}`));
-                                        }
-                                        
-                                        // Formula for Avg Volume per Day based on Verified Quantity
-                                        if (row.name === 'verifiedQty') {
-                                          const num = parseFloat(val);
-                                          if (!isNaN(num)) {
-                                            newSales[idx].avgVolPerDay = (num / 30).toFixed(2);
+                                          
+                                          // Formula for Avg Volume per Day based on Verified Quantity
+                                          if (row.name === 'verifiedQty') {
+                                            const num = parseFloat(val);
+                                            if (!isNaN(num)) {
+                                              newSales[idx].avgVolPerDay = (num / 30).toFixed(2);
+                                            }
                                           }
-                                        }
-                                        
-                                        setFormData(prev => ({ ...prev, sales: newSales }));
-                                      }}
-                                      className={`w-full px-3 py-1.5 rounded-lg border outline-none text-xs transition-all ${
-                                        row.readOnly || row.name === 'avgVolPerDay' 
-                                          ? 'bg-gray-50 border-gray-50 text-blue-600 font-bold' 
-                                          : failedFields.includes(`sale-${idx}-${row.name}`)
-                                            ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20 text-red-600 font-bold'
-                                            : 'border-gray-50 focus:border-blue-500'
-                                      }`}
-                                    />
-                                  </td>
-                                </tr>
-                              ))}
+                                          
+                                          setFormData(prev => ({ ...prev, sales: newSales }));
+                                        }}
+                                        className={`w-full px-3 py-1.5 rounded-lg border outline-none text-xs transition-all ${
+                                          isReadOnly || row.name === 'avgVolPerDay' 
+                                            ? 'bg-gray-100/70 border-gray-150 text-blue-600 font-bold' 
+                                            : failedFields.includes(`sale-${idx}-${row.name}`)
+                                              ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20 text-red-600 font-bold'
+                                              : 'border-gray-50 focus:border-blue-500'
+                                        }`}
+                                      />
+                                    </td>
+                                  </tr>
+                                );
+                              })}
                             </tbody>
                           </table>
                         </div>
@@ -2120,7 +2233,7 @@ export default function App() {
                         <thead>
                           <tr className="bg-blue-100/50">
                             <th className="p-3 text-[10px] font-bold text-blue-600 uppercase tracking-wider">CSL Period</th>
-                            <th className="p-3 text-[10px] font-bold text-blue-600 uppercase tracking-wider">Litres</th>
+                            <th className="p-3 text-[10px] font-bold text-blue-600 uppercase tracking-wider">{globalUnit === 'L' ? 'Litres' : 'Kilograms'}</th>
                             <th className="p-3 text-[10px] font-bold text-blue-600 uppercase tracking-wider">Amount (Kshs)</th>
                             <th className="p-3 text-[10px] font-bold text-blue-600 uppercase tracking-wider">Month/Year to Pay</th>
                             <th className="p-3 text-[10px] font-bold text-blue-600 uppercase tracking-wider">Paid/MPESA REF No:</th>
@@ -2198,13 +2311,17 @@ export default function App() {
                         <div className="relative flex items-center">
                           <input
                             type="checkbox"
-                            checked={declarations.accurate && declarations.offense && declarations.agreement && declarations.awareness}
+                            checked={
+                              declarations.accurate && 
+                              (!formData.sales.some(sale => (parseFloat(sale.underDeclared) || 0) > 0) || declarations.offense) && 
+                              declarations.awareness
+                            }
                             onChange={(e) => {
                               const val = e.target.checked;
+                              const hasUnderDecl = formData.sales.some(sale => (parseFloat(sale.underDeclared) || 0) > 0);
                               setDeclarations({
                                 accurate: val,
-                                offense: val,
-                                agreement: val,
+                                offense: hasUnderDecl ? val : false,
                                 awareness: val
                               });
                             }}
@@ -2217,6 +2334,7 @@ export default function App() {
                         </span>
                       </label>
 
+                      {/* First Declaration */}
                       <label className="flex items-start gap-3 cursor-pointer group pt-1">
                         <div className="relative flex items-center mt-0.5">
                           <input
@@ -2232,36 +2350,25 @@ export default function App() {
                         </span>
                       </label>
 
-                      <label className="flex items-start gap-3 cursor-pointer group">
-                        <div className="relative flex items-center mt-0.5">
-                          <input
-                            type="checkbox"
-                            checked={declarations.offense}
-                            onChange={(e) => setDeclarations(prev => ({ ...prev, offense: e.target.checked }))}
-                            className="peer h-5 w-5 cursor-pointer appearance-none rounded-md border border-gray-300 transition-all checked:border-blue-600 checked:bg-blue-600"
-                          />
-                          <CheckCircle2 className="absolute h-3.5 w-3.5 text-white opacity-0 peer-checked:opacity-100 left-0.5" />
-                        </div>
-                        <span className="text-xs text-gray-600 leading-relaxed group-hover:text-gray-900 transition-colors">
-                          I/We understand that under-declaration of milk volumes is an offense under the Dairy Industry Act.
-                        </span>
-                      </label>
+                      {/* Second Declaration (Conditional) */}
+                      {formData.sales.some(sale => (parseFloat(sale.underDeclared) || 0) > 0) && (
+                        <label className="flex items-start gap-3 cursor-pointer group">
+                          <div className="relative flex items-center mt-0.5">
+                            <input
+                              type="checkbox"
+                              checked={declarations.offense}
+                              onChange={(e) => setDeclarations(prev => ({ ...prev, offense: e.target.checked }))}
+                              className="peer h-5 w-5 cursor-pointer appearance-none rounded-md border border-gray-300 transition-all checked:border-blue-600 checked:bg-blue-600"
+                            />
+                            <CheckCircle2 className="absolute h-3.5 w-3.5 text-white opacity-0 peer-checked:opacity-100 left-0.5" />
+                          </div>
+                          <span className="text-xs text-gray-600 leading-relaxed group-hover:text-gray-900 transition-colors">
+                            I/We understand that under-declaration of milk volumes is an offense under the Dairy Industry Act and agree to pay the calculated under declared volumes and monies within the specified periods.
+                          </span>
+                        </label>
+                      )}
 
-                      <label className="flex items-start gap-3 cursor-pointer group">
-                        <div className="relative flex items-center mt-0.5">
-                          <input
-                            type="checkbox"
-                            checked={declarations.agreement}
-                            onChange={(e) => setDeclarations(prev => ({ ...prev, agreement: e.target.checked }))}
-                            className="peer h-5 w-5 cursor-pointer appearance-none rounded-md border border-gray-300 transition-all checked:border-blue-600 checked:bg-blue-600"
-                          />
-                          <CheckCircle2 className="absolute h-3.5 w-3.5 text-white opacity-0 peer-checked:opacity-100 left-0.5" />
-                        </div>
-                        <span className="text-xs text-gray-600 leading-relaxed group-hover:text-gray-900 transition-colors">
-                          I/We agree to pay the calculated penalty amounts within the specified periods.
-                        </span>
-                      </label>
-
+                      {/* Third Declaration (Originally Awareness) */}
                       <label className="flex items-start gap-3 cursor-pointer group">
                         <div className="relative flex items-center mt-0.5">
                           <input
@@ -2319,7 +2426,7 @@ export default function App() {
                               <button
                                 type="button"
                                 onClick={() => clearField('complianceSignature')}
-                                className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                                className="absolute -top-2 -right-2 p-1.5 bg-red-500 hover:bg-red-600 text-white rounded-full shadow-lg transition-colors cursor-pointer"
                               >
                                 <Trash2 className="w-3 h-3" />
                               </button>
@@ -2397,7 +2504,7 @@ export default function App() {
                               <button
                                 type="button"
                                 onClick={() => clearField('dboSignature')}
-                                className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                                className="absolute -top-2 -right-2 p-1.5 bg-red-500 hover:bg-red-600 text-white rounded-full shadow-lg transition-colors cursor-pointer"
                               >
                                 <Trash2 className="w-3 h-3" />
                               </button>
@@ -2421,7 +2528,7 @@ export default function App() {
                               <button
                                 type="button"
                                 onClick={() => clearField('dboStamp')}
-                                className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                                className="absolute -top-2 -right-2 p-1.5 bg-red-500 hover:bg-red-600 text-white rounded-full shadow-lg transition-colors cursor-pointer"
                               >
                                 <Trash2 className="w-3 h-3" />
                               </button>
