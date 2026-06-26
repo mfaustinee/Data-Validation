@@ -227,15 +227,17 @@ export default function App() {
 
   useEffect(() => {
     // Auto calculate under declared volume and mirror farmerPrice to buyingPrice for each sales entry
+    const isMirroredCategory = formData.category === 'CP>5,000 L/D' || formData.category === 'CP<5,000 L/D' || formData.category === 'Processor';
+
     const updatedSales = formData.sales.map(sale => {
       const declared = parseFloat(sale.qtyDeclared) || 0;
       const verified = parseFloat(sale.verifiedQty) || 0;
       const diff = Math.max(0, verified - declared);
       
-      // Mirror farmerPrice to buyingPrice if there is a matching intake month and year
-      const match = formData.intakes.find(
+      // Mirror farmerPrice to buyingPrice if there is a matching intake month and year and the category is mirrored
+      const match = isMirroredCategory ? formData.intakes.find(
         i => i.month && i.year && i.month === sale.month && i.year === sale.year
-      );
+      ) : null;
       const buyingPrice = match ? match.farmerPrice : sale.buyingPrice;
 
       return { 
@@ -274,7 +276,7 @@ export default function App() {
         nonCompliance: newNonCompliance 
       }));
     }
-  }, [formData.sales, formData.intakes]);
+  }, [formData.sales, formData.intakes, formData.category]);
 
   const totalPenalty = formData.nonCompliance.reduce((sum, nc) => sum + (parseFloat(nc.amount) || 0), 0);
 
@@ -2071,7 +2073,8 @@ export default function App() {
                                 { label: 'Selling Price (Per Records)', name: 'sellingPrice', unit: 'Kshs' },
                                 { label: 'Avg Volume per Day', name: 'avgVolPerDay', unit: globalUnit === 'L' ? 'Litres' : 'Kgs' },
                               ].map((row) => {
-                                const hasMatchingIntake = row.name === 'buyingPrice' && formData.intakes.some(
+                                const isMirroredCategory = formData.category === 'CP>5,000 L/D' || formData.category === 'CP<5,000 L/D' || formData.category === 'Processor';
+                                const hasMatchingIntake = isMirroredCategory && row.name === 'buyingPrice' && formData.intakes.some(
                                   i => i.month && i.year && i.month === sale.month && i.year === sale.year
                                 );
                                 const isReadOnly = row.readOnly || hasMatchingIntake;
