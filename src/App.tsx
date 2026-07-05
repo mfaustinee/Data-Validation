@@ -91,6 +91,40 @@ interface FormData {
   comments: string;
 }
 
+const parseSellingPrices = (sellingPriceStr: string): Record<string, string> => {
+  const prices: Record<string, string> = {};
+  if (!sellingPriceStr) return prices;
+  
+  try {
+    const parsed = JSON.parse(sellingPriceStr);
+    if (typeof parsed === 'object' && parsed !== null) {
+      return parsed;
+    }
+  } catch (e) {
+    // Ignore JSON error
+  }
+
+  const parts = sellingPriceStr.split(/[|,]/);
+  parts.forEach(part => {
+    const colonIdx = part.indexOf(':');
+    if (colonIdx !== -1) {
+      const product = part.substring(0, colonIdx).trim();
+      const price = part.substring(colonIdx + 1).trim();
+      if (product) {
+        prices[product] = price;
+      }
+    }
+  });
+  return prices;
+};
+
+const formatSellingPrices = (prices: Record<string, string>): string => {
+  return Object.entries(prices)
+    .filter(([_, val]) => val !== undefined && val !== '')
+    .map(([prod, val]) => `${prod}: ${val}`)
+    .join(' | ');
+};
+
 const getLocalDate = () => {
   const now = new Date();
   const offset = now.getTimezoneOffset();
@@ -752,7 +786,16 @@ export default function App() {
           if (!sale.verifiedQty || sale.verifiedQty.trim() === '') missing.push(`sale-${idx}-verifiedQty`);
           if (!sale.projectedQty || sale.projectedQty.trim() === '') missing.push(`sale-${idx}-projectedQty`);
           if (!sale.buyingPrice || sale.buyingPrice.trim() === '') missing.push(`sale-${idx}-buyingPrice`);
-          if (!sale.sellingPrice || sale.sellingPrice.trim() === '') missing.push(`sale-${idx}-sellingPrice`);
+          
+          if (formData.natureOfProduce.length > 0) {
+            const currentPrices = parseSellingPrices(sale.sellingPrice || '');
+            const allFilled = formData.natureOfProduce.every(prod => currentPrices[prod] && currentPrices[prod].trim() !== '');
+            if (!allFilled) {
+              missing.push(`sale-${idx}-sellingPrice`);
+            }
+          } else if (!sale.sellingPrice || sale.sellingPrice.trim() === '') {
+            missing.push(`sale-${idx}-sellingPrice`);
+          }
         });
       }
       if (formData.natureOfProduce.length === 0) {
@@ -2081,54 +2124,105 @@ export default function App() {
                                 const label = hasMatchingIntake ? 'Buying Price (Mirrored)' : row.label;
 
                                 return (
-                                  <tr key={row.name}>
-                                    <td className={`p-3 text-xs font-medium ${hasMatchingIntake ? 'text-blue-600 font-bold' : 'text-gray-700'}`}>{label}</td>
-                                    <td className="p-3 text-[10px] text-gray-400">{row.unit}</td>
-                                    <td className="p-1">
-                                      <input
-                                        type="text"
-                                        readOnly={isReadOnly}
-                                        value={(sale as any)[row.name]}
-                                        onChange={(e) => {
-                                          if (isReadOnly) return;
-                                          const val = e.target.value;
-                                          const newSales = [...formData.sales];
-                                          (newSales[idx] as any)[row.name] = val;
-                                          
-                                          // Mirror qtyDeclared to verifiedQty, but allow independent edit
-                                          if (row.name === 'qtyDeclared') {
-                                            newSales[idx].verifiedQty = val;
-                                            const num = parseFloat(val);
-                                            if (!isNaN(num)) {
-                                              newSales[idx].avgVolPerDay = (num / 30).toFixed(2);
-                                            }
-                                            // Clear both from failedFields
-                                            setFailedFields(prev => prev.filter(f => f !== `sale-${idx}-qtyDeclared` && f !== `sale-${idx}-verifiedQty`));
-                                          } else {
-                                            // Clear current from failedFields
-                                            setFailedFields(prev => prev.filter(f => f !== `sale-${idx}-${row.name}`));
-                                          }
-                                          
-                                          // Formula for Avg Volume per Day based on Verified Quantity
-                                          if (row.name === 'verifiedQty') {
-                                            const num = parseFloat(val);
-                                            if (!isNaN(num)) {
-                                              newSales[idx].avgVolPerDay = (num / 30).toFixed(2);
-                                            }
-                                          }
-                                          
-                                          setFormData(prev => ({ ...prev, sales: newSales }));
-                                        }}
-                                        className={`w-full px-3 py-1.5 rounded-lg border outline-none text-xs transition-all ${
-                                          isReadOnly || row.name === 'avgVolPerDay' 
-                                            ? 'bg-gray-100/70 border-gray-150 text-blue-600 font-bold' 
-                                            : failedFields.includes(`sale-${idx}-${row.name}`)
-                                              ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20 text-red-600 font-bold'
-                                              : 'border-gray-50 focus:border-blue-500'
-                                        }`}
-                                      />
-                                    </td>
-                                  </tr>
+                                  <React.Fragment key={row.name}>
+                                    {row.name === 'sellingPrice' && formData.natureOfProduce.length > 0 ? (
+                                      <tr>
+                                        <td className="p-3 text-xs font-medium text-gray-700">{label}</td>
+                                        <td className="p-3 text-[10px] text-gray-400">{row.unit}</td>
+                                        <td className="p-1">
+                                          <div className="flex flex-col gap-1.5 py-1">
+                                            {formData.natureOfProduce.map((product) => {
+                                              const currentPrices = parseSellingPrices(sale.sellingPrice || '');
+                                              const priceVal = currentPrices[product] || '';
+                                              const hasError = failedFields.includes(`sale-${idx}-sellingPrice`) && !priceVal;
+                                              return (
+                                                <div key={product} className="flex items-center gap-2 justify-between">
+                                                  <span className="text-[10px] font-semibold text-gray-500 whitespace-nowrap">{product}:</span>
+                                                  <div className="flex items-center gap-1">
+                                                    <input
+                                                      type="text"
+                                                      placeholder="Price"
+                                                      value={priceVal}
+                                                      onChange={(e) => {
+                                                        const val = e.target.value;
+                                                        const newPrices = { ...currentPrices, [product]: val };
+                                                        const formatted = formatSellingPrices(newPrices);
+                                                        
+                                                        const newSales = [...formData.sales];
+                                                        newSales[idx].sellingPrice = formatted;
+                                                        setFormData(prev => ({ ...prev, sales: newSales }));
+                                                        
+                                                        const updatedPrices = parseSellingPrices(formatted);
+                                                        const allFilled = formData.natureOfProduce.every(prod => updatedPrices[prod] && updatedPrices[prod].trim() !== '');
+                                                        if (allFilled) {
+                                                          setFailedFields(prev => prev.filter(f => f !== `sale-${idx}-sellingPrice`));
+                                                        }
+                                                      }}
+                                                      className={`w-28 px-2 py-1 rounded border outline-none text-xs text-right transition-all ${
+                                                        hasError
+                                                          ? 'border-red-500 ring-2 ring-red-100 bg-red-50/20 text-red-600 font-bold'
+                                                          : 'border-gray-200 focus:border-blue-500'
+                                                      }`}
+                                                    />
+                                                    <span className="text-[9px] text-gray-400">Kshs</span>
+                                                  </div>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    ) : (
+                                      <tr>
+                                        <td className={`p-3 text-xs font-medium ${hasMatchingIntake ? 'text-blue-600 font-bold' : 'text-gray-700'}`}>{label}</td>
+                                        <td className="p-3 text-[10px] text-gray-400">{row.unit}</td>
+                                        <td className="p-1">
+                                          <input
+                                            type="text"
+                                            readOnly={isReadOnly}
+                                            value={(sale as any)[row.name]}
+                                            onChange={(e) => {
+                                              if (isReadOnly) return;
+                                              const val = e.target.value;
+                                              const newSales = [...formData.sales];
+                                              (newSales[idx] as any)[row.name] = val;
+                                              
+                                              // Mirror qtyDeclared to verifiedQty, but allow independent edit
+                                              if (row.name === 'qtyDeclared') {
+                                                newSales[idx].verifiedQty = val;
+                                                const num = parseFloat(val);
+                                                if (!isNaN(num)) {
+                                                  newSales[idx].avgVolPerDay = (num / 30).toFixed(2);
+                                                }
+                                                // Clear both from failedFields
+                                                setFailedFields(prev => prev.filter(f => f !== `sale-${idx}-qtyDeclared` && f !== `sale-${idx}-verifiedQty`));
+                                              } else {
+                                                // Clear current from failedFields
+                                                setFailedFields(prev => prev.filter(f => f !== `sale-${idx}-${row.name}`));
+                                              }
+                                              
+                                              // Formula for Avg Volume per Day based on Verified Quantity
+                                              if (row.name === 'verifiedQty') {
+                                                const num = parseFloat(val);
+                                                if (!isNaN(num)) {
+                                                  newSales[idx].avgVolPerDay = (num / 30).toFixed(2);
+                                                }
+                                              }
+                                              
+                                              setFormData(prev => ({ ...prev, sales: newSales }));
+                                            }}
+                                            className={`w-full px-3 py-1.5 rounded-lg border outline-none text-xs transition-all ${
+                                              isReadOnly || row.name === 'avgVolPerDay' 
+                                                ? 'bg-gray-100/70 border-gray-150 text-blue-600 font-bold' 
+                                                : failedFields.includes(`sale-${idx}-${row.name}`)
+                                                  ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20 text-red-600 font-bold'
+                                                  : 'border-gray-50 focus:border-blue-500'
+                                            }`}
+                                          />
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </React.Fragment>
                                 );
                               })}
                             </tbody>
