@@ -23,7 +23,8 @@ import {
   PenTool,
   Image as ImageIcon,
   History,
-  Info
+  Info,
+  Edit2
 } from 'lucide-react';
 
 // Replace this with your actual Supabase public URL
@@ -59,6 +60,24 @@ interface NonComplianceEntry {
   mpesaRef: string;
 }
 
+interface OutletEntry {
+  location: string;
+  volPerDay: string;
+  permitStatus: 'Valid' | 'Expired' | 'None';
+  levyInfo: string;
+}
+
+interface DistributorEntry {
+  name: string;
+  contacts: string;
+  volPerDay: string;
+  permitNo: string;
+  areaOfSale: string;
+  outlets: OutletEntry[];
+  natureOfProduce: string[];
+  prices: Record<string, string>;
+}
+
 interface FormData {
   branch: string;
   date: string;
@@ -89,6 +108,16 @@ interface FormData {
   sales: SalesEntry[];
   nonCompliance: NonComplianceEntry[];
   comments: string;
+  // Distribution Details (Mini Dairy & Cottage Industry)
+  distName: string;
+  distContacts: string;
+  distVolPerDay: string;
+  distPermitNo: string;
+  distAreaOfSale: string;
+  distOutlets: OutletEntry[];
+  distNatureOfProduce: string[];
+  distPrice: string;
+  distributors: DistributorEntry[];
 }
 
 const parseSellingPrices = (sellingPriceStr: string): Record<string, string> => {
@@ -146,7 +175,7 @@ const initialData: FormData = {
   validationPeriod: '',
   location: '',
   county: 'Kericho',
-  traceability: 'YES',
+  traceability: 'Yes',
   natureOfProduce: [],
   source: '',
   complianceOfficer: '',
@@ -170,6 +199,42 @@ const initialData: FormData = {
   }],
   nonCompliance: [],
   comments: '',
+  distName: '',
+  distContacts: '',
+  distVolPerDay: '',
+  distPermitNo: '',
+  distAreaOfSale: '',
+  distOutlets: [{ location: '', volPerDay: '', permitStatus: 'None', levyInfo: 'Does not Qualify' }],
+  distNatureOfProduce: [],
+  distPrice: '',
+  distributors: [{
+    name: '',
+    contacts: '',
+    volPerDay: '',
+    permitNo: '',
+    areaOfSale: '',
+    outlets: [{ location: '', volPerDay: '', permitStatus: 'None', levyInfo: 'Does not Qualify' }],
+    natureOfProduce: [],
+    prices: {}
+  }]
+};
+
+const getMirroredSellingPrice = (product: string, sales: SalesEntry[]): string => {
+  if (!sales || sales.length === 0) return '';
+  const lastSale = sales[sales.length - 1];
+  if (lastSale && lastSale.sellingPrice) {
+    const prices = parseSellingPrices(lastSale.sellingPrice);
+    if (prices[product]) {
+      return prices[product];
+    }
+  }
+  for (let i = sales.length - 1; i >= 0; i--) {
+    const prices = parseSellingPrices(sales[i].sellingPrice || '');
+    if (prices[product]) {
+      return prices[product];
+    }
+  }
+  return '';
 };
 
 export default function App() {
@@ -179,13 +244,16 @@ export default function App() {
   const [status, setStatus] = useState<{ type: 'success' | 'error' | null; message: string }>({ type: null, message: '' });
   const [step, setStep] = useState(0);
   const [pdfPreview, setPdfPreview] = useState<string | null>(null);
-  const [lastCollections, setLastCollections] = useState<{ month: string, year: string, date: string, fullPeriod: string, displayString: string, matchedPremise?: string, pdfPath?: string }[]>([]);
+  const [lastCollections, setLastCollections] = useState<{ month: string, year: string, date: string, fullPeriod: string, displayString: string, matchedPremise?: string, pdfPath?: string, rawData?: any }[]>([]);
   const [isCheckingHistory, setIsCheckingHistory] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   
   const [lastDboRecords, setLastDboRecords] = useState<any[]>([]);
   const [isCheckingDbo, setIsCheckingDbo] = useState(false);
   const [dboError, setDboError] = useState<string | null>(null);
+
+  const [distributorRecords, setDistributorRecords] = useState<Record<number, any[]>>({});
+  const [isCheckingDist, setIsCheckingDist] = useState<Record<number, boolean>>({});
   const [declarations, setDeclarations] = useState({
     accurate: false,
     offense: false,
@@ -195,6 +263,7 @@ export default function App() {
   const [isValidationPeriodEdited, setIsValidationPeriodEdited] = useState(false);
   const [hasDraft, setHasDraft] = useState(false);
   const [failedFields, setFailedFields] = useState<string[]>([]);
+  const [isAmendment, setIsAmendment] = useState(false);
 
   const [globalUnit, setGlobalUnit] = useState<'L' | 'Kg'>('L');
 
@@ -358,7 +427,7 @@ export default function App() {
         if (error) throw error;
 
         if (data) {
-          const allExtractedMonths: { period: string; pdfPath?: string; score: number }[] = [];
+          const allExtractedMonths: { period: string; pdfPath?: string; score: number; rawData?: any }[] = [];
           
           const extractPeriodsFromString = (str: string): { period: string; score: number }[] => {
             if (!str) return [];
@@ -524,13 +593,18 @@ export default function App() {
             periodsInThisRecord.forEach(p => {
               const parsed = extractPeriodsFromString(p);
               parsed.forEach(res => {
-                allExtractedMonths.push({ period: res.period, pdfPath: item.pdf_path, score: res.score });
+                allExtractedMonths.push({ 
+                  period: res.period, 
+                  pdfPath: item.pdf_path, 
+                  score: res.score,
+                  rawData: item.raw_data
+                });
               });
             });
           });
 
           // Deduplicate based on period, keeping the one with a PDF if possible
-          const deduplicated: Record<string, { period: string; pdfPath?: string; score: number }> = {};
+          const deduplicated: Record<string, { period: string; pdfPath?: string; score: number; rawData?: any }> = {};
           allExtractedMonths.forEach(m => {
             const key = m.period.toLowerCase();
             if (!deduplicated[key] || (!deduplicated[key].pdfPath && m.pdfPath)) {
@@ -551,7 +625,8 @@ export default function App() {
             fullPeriod: m.period,
             displayString: m.period,
             matchedPremise: data[0]?.premise_name,
-            pdfPath: m.pdfPath
+            pdfPath: m.pdfPath,
+            rawData: m.rawData
           }));
           setLastCollections(history);
         }
@@ -678,10 +753,11 @@ export default function App() {
 
   const handleDboAutofill = (record: any) => {
     const raw = record.raw_data || {};
+    const permitNo = raw.permitNo || record.permit_no || '';
     setFormData(prev => ({
       ...prev,
       dboName: record.dbo_name || prev.dboName,
-      permitNo: raw.permitNo || record.permit_no || prev.permitNo,
+      permitNo: permitNo || prev.permitNo,
       premiseName: raw.premiseName || record.premise_name || prev.premiseName,
       category: raw.category || record.category || prev.category,
       contacts: raw.contacts || prev.contacts,
@@ -689,6 +765,7 @@ export default function App() {
       location: raw.location || record.location || prev.location,
       expiryDate: raw.expiryDate || prev.expiryDate || '',
       validationPeriod: raw.validationPeriod || prev.validationPeriod || '',
+      distPermitNo: raw.distPermitNo || permitNo || prev.distPermitNo || '',
     }));
     
     // Once they autofill, allow override and prevent background useEffect from overriding it
@@ -701,6 +778,54 @@ export default function App() {
     setFailedFields(prev => prev.filter(f => ![
       'dboName', 'permitNo', 'premiseName', 'category', 'contacts', 'county', 'location', 'expiryDate'
     ].includes(f)));
+  };
+
+  const handleDistributorAutofill = (idx: number, record: any) => {
+    const raw = record.raw_data || {};
+    const permitNo = raw.permitNo || record.permit_no || '';
+    const contacts = raw.contacts || record.contacts || '';
+    const name = record.dbo_name || record.premise_name || '';
+
+    setFormData(prev => {
+      const updatedDistributors = [...prev.distributors];
+      if (updatedDistributors[idx]) {
+        updatedDistributors[idx] = {
+          ...updatedDistributors[idx],
+          name: name,
+          contacts: contacts,
+          permitNo: permitNo,
+        };
+      }
+      return {
+        ...prev,
+        distributors: updatedDistributors
+      };
+    });
+
+    // Clear matches for this index to hide suggestions
+    setDistributorRecords(prev => ({ ...prev, [idx]: [] }));
+    setFailedFields(prev => prev.filter(f => ![
+      `dist-${idx}-name`, `dist-${idx}-contacts`, `dist-${idx}-permitNo`
+    ].includes(f)));
+  };
+
+  const handleRecallSubmission = (rawData: any) => {
+    if (rawData) {
+      setFormData({
+        ...initialData,
+        ...rawData,
+        distOutlets: rawData.distOutlets || [{ location: '', volPerDay: '', permitStatus: 'None', levyInfo: '' }],
+        distNatureOfProduce: rawData.distNatureOfProduce || []
+      });
+      setIsAmendment(true);
+      setIsValidationPeriodEdited(true);
+      setStep(1); // Go to general info step for amendment
+      setFailedFields([]);
+      setStatus({ 
+        type: 'success', 
+        message: `Amending validation for ${rawData.validationPeriod}. You can now correct and resubmit.` 
+      });
+    }
   };
 
   // Auto-populate validation period from table data
@@ -739,6 +864,116 @@ export default function App() {
       }
     }
   }, [formData.sales, formData.intakes, formData.hasLocalSales, formData.category, formData.date, isValidationPeriodEdited]);
+
+  // Keep distPermitNo in sync with permitNo if empty
+  useEffect(() => {
+    if (formData.permitNo && !formData.distPermitNo) {
+      setFormData(prev => ({ ...prev, distPermitNo: prev.permitNo }));
+    }
+  }, [formData.permitNo]);
+
+  // Sync first distributor fields to individual legacy form fields
+  useEffect(() => {
+    if (formData.category === 'Mini Dairy' || formData.category === 'Cottage Industry') {
+      const firstDist = formData.distributors?.[0];
+      if (firstDist) {
+        setFormData(prev => {
+          const firstPriceKey = firstDist.natureOfProduce?.[0] || '';
+          const firstPrice = firstDist.prices[firstPriceKey] !== undefined
+            ? firstDist.prices[firstPriceKey]
+            : getMirroredSellingPrice(firstPriceKey, prev.sales);
+          if (
+            prev.distName !== firstDist.name ||
+            prev.distContacts !== firstDist.contacts ||
+            prev.distVolPerDay !== firstDist.volPerDay ||
+            prev.distPermitNo !== firstDist.permitNo ||
+            prev.distAreaOfSale !== firstDist.areaOfSale ||
+            prev.distPrice !== firstPrice ||
+            JSON.stringify(prev.distOutlets) !== JSON.stringify(firstDist.outlets) ||
+            JSON.stringify(prev.distNatureOfProduce) !== JSON.stringify(firstDist.natureOfProduce)
+          ) {
+            return {
+              ...prev,
+              distName: firstDist.name,
+              distContacts: firstDist.contacts,
+              distVolPerDay: firstDist.volPerDay,
+              distPermitNo: firstDist.permitNo,
+              distAreaOfSale: firstDist.areaOfSale,
+              distPrice: firstPrice,
+              distOutlets: firstDist.outlets,
+              distNatureOfProduce: firstDist.natureOfProduce
+            };
+          }
+          return prev;
+        });
+      }
+    }
+  }, [formData.distributors, formData.sales, formData.category]);
+
+  // Fetch previous validations by Distributor Name (Debounced)
+  useEffect(() => {
+    if (!supabase) return;
+
+    const timers: NodeJS.Timeout[] = [];
+
+    formData.distributors.forEach((dist, idx) => {
+      const name = dist.name || '';
+      if (name.trim().length < 3) {
+        setDistributorRecords(prev => {
+          if (prev[idx] && prev[idx].length > 0) {
+            return { ...prev, [idx]: [] };
+          }
+          return prev;
+        });
+        return;
+      }
+
+      setIsCheckingDist(prev => {
+        if (!prev[idx]) {
+          return { ...prev, [idx]: true };
+        }
+        return prev;
+      });
+
+      const timer = setTimeout(async () => {
+        try {
+          const searchTerm = name.trim();
+          const { data, error } = await supabase
+            .from('kdb_validations')
+            .select('dbo_name, premise_name, permit_no, contacts, raw_data, date')
+            .or(`dbo_name.ilike.%${searchTerm}%,premise_name.ilike.%${searchTerm}%`)
+            .order('date', { ascending: false })
+            .limit(10);
+
+          if (error) throw error;
+
+          if (data) {
+            const uniqueMap: Record<string, any> = {};
+            data.forEach(item => {
+              const key = `${item.premise_name || ''}-${item.permit_no || ''}`.toLowerCase().trim();
+              if (!uniqueMap[key]) {
+                uniqueMap[key] = item;
+              }
+            });
+            const results = Object.values(uniqueMap).slice(0, 5);
+            setDistributorRecords(prev => ({ ...prev, [idx]: results }));
+          } else {
+            setDistributorRecords(prev => ({ ...prev, [idx]: [] }));
+          }
+        } catch (err) {
+          console.error('Error fetching distributor lookup:', err);
+        } finally {
+          setIsCheckingDist(prev => ({ ...prev, [idx]: false }));
+        }
+      }, 500);
+
+      timers.push(timer);
+    });
+
+    return () => {
+      timers.forEach(clearTimeout);
+    };
+  }, [formData.distributors.map(d => d.name).join(',')]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -784,7 +1019,12 @@ export default function App() {
           if (!sale.year) missing.push(`sale-${idx}-year`);
           if (!sale.qtyDeclared || sale.qtyDeclared.trim() === '') missing.push(`sale-${idx}-qtyDeclared`);
           if (!sale.verifiedQty || sale.verifiedQty.trim() === '') missing.push(`sale-${idx}-verifiedQty`);
-          if (!sale.projectedQty || sale.projectedQty.trim() === '') missing.push(`sale-${idx}-projectedQty`);
+          
+          const isLastMonth = idx === formData.sales.length - 1;
+          if (isLastMonth) {
+            if (!sale.projectedQty || sale.projectedQty.trim() === '') missing.push(`sale-${idx}-projectedQty`);
+          }
+          
           if (!sale.buyingPrice || sale.buyingPrice.trim() === '') missing.push(`sale-${idx}-buyingPrice`);
           
           if (formData.natureOfProduce.length > 0) {
@@ -805,6 +1045,33 @@ export default function App() {
         missing.push('source');
       }
 
+      if (formData.category === 'Mini Dairy' || formData.category === 'Cottage Industry') {
+        formData.distributors.forEach((dist, dIdx) => {
+          if (!dist.name || dist.name.trim() === '') missing.push(`dist-${dIdx}-name`);
+          if (!dist.contacts || dist.contacts.trim() === '') missing.push(`dist-${dIdx}-contacts`);
+          if (!dist.volPerDay || dist.volPerDay.trim() === '') missing.push(`dist-${dIdx}-volPerDay`);
+          if (!dist.permitNo || dist.permitNo.trim() === '') missing.push(`dist-${dIdx}-permitNo`);
+          if (!dist.areaOfSale || dist.areaOfSale.trim() === '') missing.push(`dist-${dIdx}-areaOfSale`);
+          if (!dist.natureOfProduce || dist.natureOfProduce.length === 0) missing.push(`dist-${dIdx}-natureOfProduce`);
+
+          if (dist.natureOfProduce && dist.natureOfProduce.length > 0) {
+            dist.natureOfProduce.forEach(product => {
+              const price = dist.prices[product] !== undefined ? dist.prices[product] : getMirroredSellingPrice(product, formData.sales);
+              if (!price || price.trim() === '') {
+                missing.push(`dist-${dIdx}-price-${product}`);
+              }
+            });
+          }
+
+          if (dist.outlets) {
+            dist.outlets.forEach((outlet, oIdx) => {
+              if (!outlet.location || outlet.location.trim() === '') missing.push(`dist-${dIdx}-outlet-${oIdx}-location`);
+              if (!outlet.volPerDay || outlet.volPerDay.trim() === '') missing.push(`dist-${dIdx}-outlet-${oIdx}-volPerDay`);
+            });
+          }
+        });
+      }
+
       if (missing.length > 0) {
         setFailedFields(prev => Array.from(new Set([...prev, ...missing])));
         if (missing.includes('natureOfProduce')) {
@@ -815,6 +1082,10 @@ export default function App() {
           setStatus({ type: 'error', message: 'Please complete all fields in the monthly intake section.' });
         } else if (missing.some(m => m.startsWith('sale-'))) {
           setStatus({ type: 'error', message: 'Please complete all fields in the local sales section.' });
+        } else if (missing.some(m => m.startsWith('distOutlet-'))) {
+          setStatus({ type: 'error', message: 'Please complete all outlet details in the distribution section.' });
+        } else if (missing.some(m => m.startsWith('dist'))) {
+          setStatus({ type: 'error', message: 'Please complete all required fields in the Distribution Details section.' });
         } else {
           setStatus({ type: 'error', message: 'Please complete all required fields.' });
         }
@@ -828,7 +1099,7 @@ export default function App() {
         return !required.includes(f);
       }
       if (s === 2) {
-        return f.startsWith('intake-') || f.startsWith('sale-') || f === 'natureOfProduce' || f === 'source';
+        return f.startsWith('intake-') || f.startsWith('sale-') || f === 'natureOfProduce' || f === 'source' || f.startsWith('dist');
       }
       return true;
     }));
@@ -952,6 +1223,62 @@ export default function App() {
       });
       currentY = (doc as any).lastAutoTable.finalY;
       currentY += 10;
+    }
+
+    // Distribution Details Table (for Mini Dairy & Cottage Industry)
+    if (data.category === 'Mini Dairy' || data.category === 'Cottage Industry') {
+      const distributors = Array.isArray((data as any).distributors) && (data as any).distributors.length > 0
+        ? (data as any).distributors
+        : [{
+            name: data.distName,
+            contacts: data.distContacts,
+            volPerDay: data.distVolPerDay,
+            permitNo: data.distPermitNo,
+            areaOfSale: data.distAreaOfSale,
+            outlets: data.distOutlets,
+            natureOfProduce: data.distNatureOfProduce,
+            prices: { [data.distNatureOfProduce?.[0] || 'Produce']: data.distPrice }
+          }];
+
+      distributors.forEach((dist: any, dIdx: number) => {
+        checkPageBreak(55);
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.text(`Distributor Details #${dIdx + 1}: ${dist.name || 'Unnamed'}`, 20, currentY);
+        doc.setFont("helvetica", "normal");
+        
+        const outletsText = Array.isArray(dist.outlets) && dist.outlets.length > 0
+          ? dist.outlets.map((o: any, index: number) => `#${index+1}: Loc: ${o.location || 'N/A'}, Vol: ${o.volPerDay || 'N/A'}, Permit: ${o.permitStatus || 'N/A'}, Levy: ${o.levyInfo || 'N/A'}`).join('\n')
+          : 'None';
+
+        const natureText = Array.isArray(dist.natureOfProduce) ? dist.natureOfProduce.join(', ') : 'N/A';
+
+        const pricesText = dist.prices && Object.keys(dist.prices).length > 0
+          ? Object.entries(dist.prices).map(([prod, price]) => `${prod}: ${price}`).join(', ')
+          : (data.distPrice || 'N/A');
+
+        autoTable(doc, {
+          startY: currentY + 4,
+          head: [['Field', 'Detail']],
+          body: [
+            ['Distributor Name', dist.name || 'N/A'],
+            ['Distributor Contacts', dist.contacts || 'N/A'],
+            ['Volume per Day', dist.volPerDay || 'N/A'],
+            ['Permit Number', dist.permitNo || 'N/A'],
+            ['Area of Sale', dist.areaOfSale || 'N/A'],
+            ['Nature of Produce', natureText],
+            ['Prices (Kshs)', pricesText],
+            ['List of Outlets', outletsText]
+          ],
+          styles: { fontSize: 8 },
+          columnStyles: {
+            0: { cellWidth: 50, fontStyle: 'bold' },
+            1: { cellWidth: 120 }
+          }
+        });
+        currentY = (doc as any).lastAutoTable.finalY;
+        currentY += 10;
+      });
     }
 
     // Summary Data
@@ -1131,11 +1458,13 @@ export default function App() {
     }
 
     // Duplicate check
-    const isDuplicate = lastCollections.some(c => c.fullPeriod.toLowerCase() === formData.validationPeriod.toLowerCase());
-    if (isDuplicate) {
-      setStatus({ type: 'error', message: `Data for ${formData.validationPeriod} has already been collected for this Premise. Please verify the validation period.` });
-      setIsSubmitting(false);
-      return;
+    if (!isAmendment) {
+      const isDuplicate = lastCollections.some(c => c.fullPeriod.toLowerCase() === formData.validationPeriod.toLowerCase());
+      if (isDuplicate) {
+        setStatus({ type: 'error', message: `Data for ${formData.validationPeriod} has already been collected for this Premise. Please verify the validation period.` });
+        setIsSubmitting(false);
+        return;
+      }
     }
 
     try {
@@ -1152,7 +1481,9 @@ export default function App() {
           let pdfPath = null;
           try {
             const pdfBlob = dataURIToBlob(pdf);
-            const fileName = `${updatedData.premiseName.replace(/\s+/g, '_')}_${updatedData.validationPeriod.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
+            const fileName = isAmendment
+              ? `${updatedData.premiseName.replace(/\s+/g, '_')}_${updatedData.validationPeriod.replace(/\s+/g, '_')}_Amended_v2_${Date.now()}.pdf`
+              : `${updatedData.premiseName.replace(/\s+/g, '_')}_${updatedData.validationPeriod.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
             const { data: uploadData, error: uploadError } = await supabase.storage
               .from('validation-pdfs')
               .upload(fileName, pdfBlob, {
@@ -1169,22 +1500,46 @@ export default function App() {
             console.error('PDF upload process failed:', uploadErr);
           }
 
-          const { error: supabaseError } = await supabase
-            .from('kdb_validations')
-            .insert([{
-              dbo_name: updatedData.dboName,
-              premise_name: updatedData.premiseName,
-              branch: updatedData.branch,
-              date: updatedData.date,
-              validation_period: updatedData.validationPeriod,
-              category: updatedData.category,
-              permit_no: updatedData.permitNo,
-              location: updatedData.location,
-              county: updatedData.county,
-              total_penalty: totalPenalty,
-              pdf_path: pdfPath, // Store the reference to the file
-              raw_data: updatedData // Store full JSON for backup
-            }]);
+          let supabaseError;
+          if (isAmendment) {
+            const { error } = await supabase
+              .from('kdb_validations')
+              .update({
+                dbo_name: updatedData.dboName,
+                branch: updatedData.branch,
+                date: updatedData.date,
+                category: updatedData.category,
+                permit_no: updatedData.permitNo,
+                location: updatedData.location,
+                county: updatedData.county,
+                total_penalty: totalPenalty,
+                pdf_path: pdfPath, // Store reference to updated file
+                raw_data: updatedData // Store full JSON for backup
+              })
+              .match({
+                premise_name: updatedData.premiseName,
+                validation_period: updatedData.validationPeriod
+              });
+            supabaseError = error;
+          } else {
+            const { error } = await supabase
+              .from('kdb_validations')
+              .insert([{
+                dbo_name: updatedData.dboName,
+                premise_name: updatedData.premiseName,
+                branch: updatedData.branch,
+                date: updatedData.date,
+                validation_period: updatedData.validationPeriod,
+                category: updatedData.category,
+                permit_no: updatedData.permitNo,
+                location: updatedData.location,
+                county: updatedData.county,
+                total_penalty: totalPenalty,
+                pdf_path: pdfPath, // Store reference to the file
+                raw_data: updatedData // Store full JSON for backup
+              }]);
+            supabaseError = error;
+          }
           
           if (supabaseError) console.error('Supabase save error:', supabaseError);
         } catch (err) {
@@ -1196,7 +1551,7 @@ export default function App() {
       const res = await fetch('/api/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: updatedData, pdf }),
+        body: JSON.stringify({ data: updatedData, pdf, isAmendment }),
       });
 
       if (res.ok) {
@@ -1205,13 +1560,17 @@ export default function App() {
         // Trigger PDF Download
         const link = document.createElement('a');
         link.href = pdf;
-        link.download = `KDB_Validation_${formData.dboName}_${formData.date}.pdf`;
+        const downloadName = isAmendment 
+          ? `KDB_Validation_${formData.dboName}_${formData.date}_Amended_v2.pdf`
+          : `KDB_Validation_${formData.dboName}_${formData.date}.pdf`;
+        link.download = downloadName;
         link.click();
 
         // Clear local storage draft and manual override edits
         localStorage.removeItem('kdb_validation_form_draft');
         localStorage.removeItem('kdb_validation_form_draft_step');
         setIsValidationPeriodEdited(false);
+        setIsAmendment(false);
 
         setFormData(initialData);
         setStep(0); // Go back to start
@@ -1406,6 +1765,48 @@ export default function App() {
                     id="discard-draft-btn"
                   >
                     Discard
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Amendment Mode Alert */}
+        <AnimatePresence>
+          {isAmendment && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="mb-4 overflow-hidden"
+              id="amendment-mode-alert"
+            >
+              <div className="p-4 bg-amber-100 border border-amber-300 text-amber-950 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
+                <div className="flex items-center gap-2.5">
+                  <span className="p-2 rounded-lg bg-amber-200 flex items-center justify-center text-amber-800">
+                    <Edit2 className="w-5 h-5" />
+                  </span>
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-amber-900">✏️ Amendment Mode Active</p>
+                    <p className="text-xs text-amber-800 font-medium">
+                      You are amending the validation report for <span className="font-bold">{formData.premiseName || 'this Premise'}</span> ({formData.validationPeriod}). Saving will overwrite the previous submission and sheets record.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 mt-2 sm:mt-0 self-end sm:self-auto shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFormData(initialData);
+                      setIsAmendment(false);
+                      setStep(0);
+                      setStatus({ type: 'success', message: 'Amendment cancelled.' });
+                    }}
+                    className="px-3 py-1.5 rounded-lg border border-amber-300 bg-white hover:bg-amber-50 text-amber-800 text-[11px] font-bold transition-all cursor-pointer shadow-sm"
+                    id="cancel-amendment-btn"
+                  >
+                    Cancel Amendment
                   </button>
                 </div>
               </div>
@@ -1691,18 +2092,32 @@ export default function App() {
                                 </p>
                                 <div className="text-[10px] text-blue-600 mt-1 flex flex-wrap gap-x-2 gap-y-1">
                                   Last 3 validated months: {lastCollections.map((c, i) => (
-                                    <div key={i} className="flex items-center gap-1">
+                                    <div key={i} className="flex items-center gap-1.5 flex-wrap">
                                       <span className="font-semibold">{c.displayString}</span>
-                                      {c.pdfPath && (
-                                        <button
-                                          onClick={() => viewPdf(c.pdfPath!)}
-                                          className="text-[9px] bg-blue-100 hover:bg-blue-200 text-blue-700 px-1.5 py-0.5 rounded flex items-center gap-0.5 transition-colors"
-                                          title="View PDF"
-                                        >
-                                          <FileText className="w-2.5 h-2.5" />
-                                          PDF
-                                        </button>
-                                      )}
+                                      <div className="flex items-center gap-1">
+                                        {c.pdfPath && (
+                                          <button
+                                            type="button"
+                                            onClick={() => viewPdf(c.pdfPath!)}
+                                            className="text-[9px] bg-blue-100 hover:bg-blue-200 text-blue-700 px-1.5 py-0.5 rounded flex items-center gap-0.5 transition-colors"
+                                            title="View PDF"
+                                          >
+                                            <FileText className="w-2.5 h-2.5" />
+                                            PDF
+                                          </button>
+                                        )}
+                                        {c.rawData && (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleRecallSubmission(c.rawData)}
+                                            className="text-[9px] bg-amber-100 hover:bg-amber-200 text-amber-700 px-1.5 py-0.5 rounded flex items-center gap-0.5 transition-colors font-medium"
+                                            title="Amend this submission"
+                                          >
+                                            <Edit2 className="w-2.5 h-2.5" />
+                                            Amend
+                                          </button>
+                                        )}
+                                      </div>
                                       {i < lastCollections.length - 1 && <span className="text-blue-300">|</span>}
                                     </div>
                                   ))}
@@ -1767,6 +2182,31 @@ export default function App() {
                         onChange={handleChange}
                         className={getInputClass('validationPeriod')}
                       />
+                      {formData.validationPeriod && !isAmendment && lastCollections.some(c => c.fullPeriod.toLowerCase() === formData.validationPeriod.toLowerCase()) && (() => {
+                        const matchingCollection = lastCollections.find(c => c.fullPeriod.toLowerCase() === formData.validationPeriod.toLowerCase());
+                        return (
+                          <motion.div
+                            initial={{ opacity: 0, y: -5 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="mt-1.5 p-2 bg-amber-50 rounded-lg border border-amber-200 flex flex-col gap-1.5 text-[11px]"
+                          >
+                            <p className="text-amber-800 font-medium flex items-center gap-1">
+                              <Info className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                              This period has already been validated.
+                            </p>
+                            {matchingCollection?.rawData && (
+                              <button
+                                type="button"
+                                onClick={() => handleRecallSubmission(matchingCollection.rawData)}
+                                className="self-start text-[10px] bg-amber-600 hover:bg-amber-700 text-white font-bold px-2 py-1 rounded shadow-sm transition-colors cursor-pointer flex items-center gap-1"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                                Load & Amend Submission
+                              </button>
+                            )}
+                          </motion.div>
+                        );
+                      })()}
                     </div>
                     <div className="space-y-2">
                       <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">County</label>
@@ -2003,6 +2443,65 @@ export default function App() {
                     </motion.div>
                   )}
 
+                  {/* General Compliance / Produce Metadata Section */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-6 bg-gray-50/50 rounded-3xl border border-gray-100">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Traceability & Records Available</label>
+                      <div className="flex gap-4">
+                        {['Yes', 'No'].map(opt => (
+                          <button
+                            key={opt}
+                            type="button"
+                            onClick={() => setFormData(prev => ({ ...prev, traceability: opt }))}
+                            className={`flex-1 py-2 rounded-xl border font-bold text-xs transition-all ${
+                              formData.traceability === opt 
+                                ? 'bg-blue-600 border-blue-600 text-white shadow-md' 
+                                : 'bg-white border-gray-200 text-gray-600'
+                            }`}
+                          >
+                            {opt}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className={`space-y-2 p-2.5 rounded-2xl transition-all ${failedFields.includes('natureOfProduce') ? 'bg-red-50/50 border border-red-300 ring-2 ring-red-100' : 'border border-transparent'}`}>
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Nature of Produce?</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {['Pasteurized Milk', 'Raw Milk', 'Cultured Milk', 'Yoghurt', 'UHT', 'Ghee', 'Butter', 'Cheese', 'Milk Shake'].map(opt => (
+                          <label key={opt} className="flex items-center gap-2 cursor-pointer group">
+                            <input
+                              type="checkbox"
+                              checked={formData.natureOfProduce.includes(opt)}
+                              onChange={(e) => {
+                                const newProduce = e.target.checked 
+                                  ? [...formData.natureOfProduce, opt]
+                                  : formData.natureOfProduce.filter(p => p !== opt);
+                                setFormData(prev => ({ ...prev, natureOfProduce: newProduce }));
+                                setFailedFields(prev => prev.filter(f => f !== 'natureOfProduce'));
+                              }}
+                              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <span className="text-[11px] text-gray-600 group-hover:text-gray-900 transition-colors">{opt}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Source</label>
+                      <input
+                        type="text"
+                        name="source"
+                        value={formData.source}
+                        onChange={handleChange}
+                        className={`w-full px-4 py-2 rounded-xl border outline-none text-xs transition-all ${
+                          failedFields.includes('source')
+                            ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20'
+                            : 'border-gray-200 focus:border-blue-500'
+                        }`}
+                      />
+                    </div>
+                  </div>
+
                   {/* Merged Local Sales Section */}
                   <div className="space-y-6">
                     <div className="flex items-center justify-between">
@@ -2120,7 +2619,8 @@ export default function App() {
                                 const hasMatchingIntake = isMirroredCategory && row.name === 'buyingPrice' && formData.intakes.some(
                                   i => i.month && i.year && i.month === sale.month && i.year === sale.year
                                 );
-                                const isReadOnly = row.readOnly || hasMatchingIntake;
+                                const isLastMonth = idx === formData.sales.length - 1;
+                                const isReadOnly = row.readOnly || hasMatchingIntake || (row.name === 'projectedQty' && !isLastMonth);
                                 const label = hasMatchingIntake ? 'Buying Price (Mirrored)' : row.label;
 
                                 return (
@@ -2232,63 +2732,436 @@ export default function App() {
                     )))}
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Traceability & Records Available</label>
-                      <div className="flex gap-4">
-                        {['YES', 'NO'].map(opt => (
-                          <button
-                            key={opt}
-                            type="button"
-                            onClick={() => setFormData(prev => ({ ...prev, traceability: opt }))}
-                            className={`flex-1 py-2 rounded-xl border font-bold text-xs transition-all ${
-                              formData.traceability === opt 
-                                ? 'bg-blue-600 border-blue-600 text-white shadow-md' 
-                                : 'bg-white border-gray-200 text-gray-600'
-                            }`}
-                          >
-                            {opt}
-                          </button>
-                        ))}
+                  {/* Distribution Details Section (Mini Dairy and Cottage Industry only) */}
+                  {(formData.category === 'Mini Dairy' || formData.category === 'Cottage Industry') && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="space-y-6 border border-gray-100 bg-white p-6 rounded-3xl shadow-sm"
+                    >
+                      <div className="border-b border-gray-100 pb-4">
+                        <h3 className="font-bold text-gray-900 text-sm tracking-wide uppercase">Distributor Details</h3>
+                        <p className="text-[10px] text-gray-500 mt-1">Please provide distribution channels, outlet network, and regulatory information for all distributors.</p>
                       </div>
-                    </div>
-                     <div className={`space-y-2 p-2.5 rounded-2xl transition-all ${failedFields.includes('natureOfProduce') ? 'bg-red-50/50 border border-red-300 ring-2 ring-red-100' : 'border border-transparent'}`}>
-                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Nature of Produce?</label>
-                      <div className="grid grid-cols-2 gap-2">
-                        {['Pasteurized Milk', 'Raw Milk', 'Cultured Milk', 'Yoghurt'].map(opt => (
-                          <label key={opt} className="flex items-center gap-2 cursor-pointer group">
-                            <input
-                              type="checkbox"
-                              checked={formData.natureOfProduce.includes(opt)}
-                              onChange={(e) => {
-                                const newProduce = e.target.checked 
-                                  ? [...formData.natureOfProduce, opt]
-                                  : formData.natureOfProduce.filter(p => p !== opt);
-                                setFormData(prev => ({ ...prev, natureOfProduce: newProduce }));
-                                setFailedFields(prev => prev.filter(f => f !== 'natureOfProduce'));
-                              }}
-                              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                            />
-                            <span className="text-[11px] text-gray-600 group-hover:text-gray-900 transition-colors">{opt}</span>
-                          </label>
-                        ))}
+
+                      <div className="space-y-8">
+                        {formData.distributors.map((dist, dIdx) => {
+                          return (
+                            <div key={dIdx} className="p-6 bg-slate-50/40 border border-slate-100 rounded-3xl relative space-y-5">
+                              <div className="flex justify-between items-center border-b border-slate-100/60 pb-3">
+                                <h4 className="font-bold text-slate-800 text-xs uppercase tracking-wide">
+                                  Distributor #{dIdx + 1}: {dist.name || 'Unnamed'}
+                                </h4>
+                                {formData.distributors.length > 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setFormData(prev => ({
+                                        ...prev,
+                                        distributors: prev.distributors.filter((_, i) => i !== dIdx)
+                                      }));
+                                    }}
+                                    className="text-red-500 hover:text-red-600 bg-red-50 hover:bg-red-100/50 px-3 py-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                  >
+                                    Remove Distributor
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="space-y-1 relative">
+                                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Distributor Name</label>
+                                  <input
+                                    type="text"
+                                    value={dist.name}
+                                    onChange={(e) => {
+                                      const next = [...formData.distributors];
+                                      next[dIdx].name = e.target.value;
+                                      setFormData(prev => ({ ...prev, distributors: next }));
+                                      setFailedFields(prev => prev.filter(f => f !== `dist-${dIdx}-name`));
+                                    }}
+                                    className={`w-full px-4 py-2 rounded-xl border outline-none text-xs transition-all ${
+                                      failedFields.includes(`dist-${dIdx}-name`)
+                                        ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20'
+                                        : 'border-gray-200 focus:border-blue-500 bg-white'
+                                    }`}
+                                    placeholder="Enter distributor name to search..."
+                                  />
+                                  {isCheckingDist[dIdx] && (
+                                    <p className="text-[10px] text-blue-500 font-medium mt-1 flex items-center gap-1 animate-pulse">
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                      Searching previous validations...
+                                    </p>
+                                  )}
+                                  
+                                  <AnimatePresence>
+                                    {distributorRecords[dIdx] && distributorRecords[dIdx].length > 0 && (
+                                      <motion.div
+                                        initial={{ opacity: 0, height: 0 }}
+                                        animate={{ opacity: 1, height: 'auto' }}
+                                        exit={{ opacity: 0, height: 0 }}
+                                        className="absolute z-50 w-full mt-2 p-3 bg-white rounded-xl border border-blue-100 space-y-2 shadow-xl max-h-56 overflow-y-auto"
+                                      >
+                                        <p className="text-[10px] font-bold text-blue-800 uppercase tracking-tight flex items-center gap-1">
+                                          <Database className="w-3.5 h-3.5 text-blue-600" />
+                                          Previous Distributor Found: Click to Autofill
+                                        </p>
+                                        <div className="flex flex-col gap-1.5">
+                                          {distributorRecords[dIdx].map((record, rIdx) => {
+                                            const raw = record.raw_data || {};
+                                            const name = record.dbo_name || record.premise_name || 'Unknown';
+                                            const pNo = record.permit_no || 'N/A';
+                                            const contacts = raw.contacts || record.contacts || 'N/A';
+                                            
+                                            return (
+                                              <button
+                                                key={rIdx}
+                                                type="button"
+                                                onClick={() => handleDistributorAutofill(dIdx, record)}
+                                                className="w-full text-left p-2 rounded-lg bg-white border border-slate-100 hover:border-blue-300 hover:bg-blue-50/30 transition-all text-[11px] group flex flex-col gap-0.5 cursor-pointer"
+                                              >
+                                                <div className="flex justify-between items-center w-full">
+                                                  <span className="font-bold text-gray-800 group-hover:text-blue-900 truncate">
+                                                    {name}
+                                                  </span>
+                                                  <span className="text-[9px] font-mono text-blue-700 bg-blue-100/50 px-1.5 py-0.5 rounded-md">
+                                                    Permit: {pNo}
+                                                  </span>
+                                                </div>
+                                                <div className="text-[10px] text-gray-500 flex justify-between items-center mt-0.5">
+                                                  <span>Contacts: {contacts}</span>
+                                                  <span className="text-[9px] text-gray-400 font-mono italic">
+                                                    {new Date(record.date).toLocaleDateString('default', { month: 'short', year: 'numeric' })}
+                                                  </span>
+                                                </div>
+                                              </button>
+                                            );
+                                          })}
+                                        </div>
+                                      </motion.div>
+                                    )}
+                                  </AnimatePresence>
+                                </div>
+
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Contacts</label>
+                                  <input
+                                    type="text"
+                                    value={dist.contacts}
+                                    onChange={(e) => {
+                                      const next = [...formData.distributors];
+                                      next[dIdx].contacts = e.target.value;
+                                      setFormData(prev => ({ ...prev, distributors: next }));
+                                      setFailedFields(prev => prev.filter(f => f !== `dist-${dIdx}-contacts`));
+                                    }}
+                                    className={`w-full px-4 py-2 rounded-xl border outline-none text-xs transition-all ${
+                                      failedFields.includes(`dist-${dIdx}-contacts`)
+                                        ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20'
+                                        : 'border-gray-200 focus:border-blue-500 bg-white'
+                                    }`}
+                                    placeholder="Enter contact details"
+                                  />
+                                </div>
+
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Volume / Day ({globalUnit}/Day)</label>
+                                  <input
+                                    type="text"
+                                    value={dist.volPerDay}
+                                    onChange={(e) => {
+                                      const next = [...formData.distributors];
+                                      next[dIdx].volPerDay = e.target.value;
+                                      setFormData(prev => ({ ...prev, distributors: next }));
+                                      setFailedFields(prev => prev.filter(f => f !== `dist-${dIdx}-volPerDay`));
+                                    }}
+                                    className={`w-full px-4 py-2 rounded-xl border outline-none text-xs transition-all ${
+                                      failedFields.includes(`dist-${dIdx}-volPerDay`)
+                                        ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20'
+                                        : 'border-gray-200 focus:border-blue-500 bg-white'
+                                    }`}
+                                    placeholder="0.00"
+                                  />
+                                </div>
+
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Permit No</label>
+                                  <input
+                                    type="text"
+                                    value={dist.permitNo}
+                                    onChange={(e) => {
+                                      const next = [...formData.distributors];
+                                      next[dIdx].permitNo = e.target.value;
+                                      setFormData(prev => ({ ...prev, distributors: next }));
+                                      setFailedFields(prev => prev.filter(f => f !== `dist-${dIdx}-permitNo`));
+                                    }}
+                                    className={`w-full px-4 py-2 rounded-xl border outline-none text-xs transition-all ${
+                                      failedFields.includes(`dist-${dIdx}-permitNo`)
+                                        ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20'
+                                        : 'border-gray-200 focus:border-blue-500 bg-white font-mono text-blue-700'
+                                    }`}
+                                    placeholder="KDB / ..."
+                                  />
+                                </div>
+
+                                <div className="space-y-1">
+                                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Area of Sale</label>
+                                  <input
+                                    type="text"
+                                    value={dist.areaOfSale}
+                                    onChange={(e) => {
+                                      const next = [...formData.distributors];
+                                      next[dIdx].areaOfSale = e.target.value;
+                                      setFormData(prev => ({ ...prev, distributors: next }));
+                                      setFailedFields(prev => prev.filter(f => f !== `dist-${dIdx}-areaOfSale`));
+                                    }}
+                                    className={`w-full px-4 py-2 rounded-xl border outline-none text-xs transition-all ${
+                                      failedFields.includes(`dist-${dIdx}-areaOfSale`)
+                                        ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20'
+                                        : 'border-gray-200 focus:border-blue-500 bg-white'
+                                    }`}
+                                    placeholder="Enter geographic sales area"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Nature of produce and prices combined */}
+                              <div className={`space-y-3 p-4 rounded-2xl border transition-all ${
+                                failedFields.includes(`dist-${dIdx}-natureOfProduce`)
+                                  ? 'bg-red-50/50 border-red-300 ring-2 ring-red-100'
+                                  : 'bg-slate-50/30 border-slate-100'
+                              }`}>
+                                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center justify-between">
+                                  <span>Nature of Produce & Distributor Price (Kshs)</span>
+                                  <span className="text-[9px] text-gray-400 font-medium normal-case">Select distributed products and enter their prices</span>
+                                </label>
+                                {formData.natureOfProduce.length === 0 ? (
+                                  <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl text-amber-700 text-[11px] font-medium">
+                                    No products selected in the "Nature of Produce?" section above. Please check at least one product above first.
+                                  </div>
+                                ) : (
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 bg-white p-3 rounded-xl border border-slate-100">
+                                    {formData.natureOfProduce.map(opt => {
+                                      const isChecked = dist.natureOfProduce?.includes(opt);
+                                      const mirroredPrice = getMirroredSellingPrice(opt, formData.sales);
+                                      const hasCustomPrice = dist.prices[opt] !== undefined;
+                                      const displayPrice = hasCustomPrice ? dist.prices[opt] : mirroredPrice;
+
+                                      return (
+                                        <div key={opt} className={`p-3 rounded-xl border transition-all flex flex-col justify-between gap-2.5 ${
+                                          isChecked 
+                                            ? 'bg-blue-50/20 border-blue-100' 
+                                            : 'bg-gray-50/30 border-gray-100 opacity-70 hover:opacity-100'
+                                        }`}>
+                                          <label className="flex items-center gap-2 cursor-pointer select-none">
+                                            <input
+                                              type="checkbox"
+                                              checked={isChecked}
+                                              onChange={() => {
+                                                const currentList = dist.natureOfProduce || [];
+                                                const nextList = isChecked
+                                                  ? currentList.filter(x => x !== opt)
+                                                  : [...currentList, opt];
+                                                const next = [...formData.distributors];
+                                                next[dIdx].natureOfProduce = nextList;
+                                                setFormData(prev => ({ ...prev, distributors: next }));
+                                                setFailedFields(prev => prev.filter(f => f !== `dist-${dIdx}-natureOfProduce`));
+                                              }}
+                                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                                            />
+                                            <span className={`text-[11px] font-semibold ${isChecked ? 'text-blue-900' : 'text-gray-500'}`}>
+                                              {opt}
+                                            </span>
+                                          </label>
+
+                                          <div className="space-y-0.5">
+                                            <span className="text-[8px] font-semibold text-slate-400 block truncate">
+                                              {!hasCustomPrice && mirroredPrice ? 'Price (Mirrored)' : 'Price (Custom)'}
+                                            </span>
+                                            <div className="relative">
+                                              <input
+                                                type="text"
+                                                value={displayPrice}
+                                                onChange={(e) => {
+                                                  const next = [...formData.distributors];
+                                                  next[dIdx].prices = {
+                                                    ...next[dIdx].prices,
+                                                    [opt]: e.target.value
+                                                  };
+                                                  // Automatically check the product checkbox if user types a price
+                                                  const currentList = dist.natureOfProduce || [];
+                                                  if (!currentList.includes(opt)) {
+                                                    next[dIdx].natureOfProduce = [...currentList, opt];
+                                                  }
+                                                  setFormData(prev => ({ ...prev, distributors: next }));
+                                                  setFailedFields(prev => prev.filter(f => f !== `dist-${dIdx}-price-${opt}`));
+                                                }}
+                                                className={`w-full pl-2 pr-7 py-1 rounded-lg border outline-none text-[11px] transition-all ${
+                                                  failedFields.includes(`dist-${dIdx}-price-${opt}`)
+                                                    ? 'border-red-500 ring-2 ring-red-100 bg-red-50/10'
+                                                    : 'border-slate-200 focus:border-blue-400 bg-white'
+                                                }`}
+                                                placeholder={mirroredPrice || "0.00"}
+                                              />
+                                              <div className="absolute inset-y-0 right-0 pr-2 flex items-center pointer-events-none text-[8px] font-bold text-slate-400">
+                                                Ksh
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* List of Outlets */}
+                              <div className="space-y-4 pt-2">
+                                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">List of Outlets</label>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const next = [...formData.distributors];
+                                      next[dIdx].outlets = [
+                                        ...(next[dIdx].outlets || []),
+                                        { location: '', volPerDay: '', permitStatus: 'None', levyInfo: 'Does not Qualify' }
+                                      ];
+                                      setFormData(prev => ({ ...prev, distributors: next }));
+                                    }}
+                                    className="text-[10px] font-bold text-blue-600 hover:underline flex items-center gap-1 cursor-pointer"
+                                  >
+                                    + Add Outlet
+                                  </button>
+                                </div>
+
+                                <div className="space-y-3">
+                                  {(dist.outlets || []).map((outlet, oIdx) => (
+                                    <div key={oIdx} className="p-4 bg-white border border-slate-100 rounded-2xl relative space-y-3">
+                                      {dist.outlets.length > 1 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const next = [...formData.distributors];
+                                            next[dIdx].outlets = next[dIdx].outlets.filter((_, i) => i !== oIdx);
+                                            setFormData(prev => ({ ...prev, distributors: next }));
+                                          }}
+                                          className="absolute top-2 right-3 text-slate-400 hover:text-red-500 font-bold text-base cursor-pointer"
+                                        >
+                                          &times;
+                                        </button>
+                                      )}
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                                        <div className="space-y-1">
+                                          <label className="text-[9px] font-bold text-gray-400 uppercase">Outlet Location</label>
+                                          <input
+                                            type="text"
+                                            placeholder="e.g. Town Center"
+                                            value={outlet.location}
+                                            onChange={(e) => {
+                                              const next = [...formData.distributors];
+                                              next[dIdx].outlets[oIdx].location = e.target.value;
+                                              setFormData(prev => ({ ...prev, distributors: next }));
+                                              setFailedFields(prev => prev.filter(f => f !== `dist-${dIdx}-outlet-${oIdx}-location`));
+                                            }}
+                                            className={`w-full px-3 py-1.5 rounded-lg border outline-none text-xs transition-all bg-white ${
+                                              failedFields.includes(`dist-${dIdx}-outlet-${oIdx}-location`)
+                                                ? 'border-red-500 ring-2 ring-red-100 bg-red-50/20'
+                                                : 'border-slate-200 focus:border-blue-500'
+                                            }`}
+                                          />
+                                        </div>
+
+                                        <div className="space-y-1">
+                                          <label className="text-[9px] font-bold text-gray-400 uppercase">Vol / Day ({globalUnit})</label>
+                                          <input
+                                            type="text"
+                                            placeholder="0.00"
+                                            value={outlet.volPerDay}
+                                            onChange={(e) => {
+                                              const next = [...formData.distributors];
+                                              next[dIdx].outlets[oIdx].volPerDay = e.target.value;
+                                              setFormData(prev => ({ ...prev, distributors: next }));
+                                              setFailedFields(prev => prev.filter(f => f !== `dist-${dIdx}-outlet-${oIdx}-volPerDay`));
+                                            }}
+                                            className={`w-full px-3 py-1.5 rounded-lg border outline-none text-xs transition-all bg-white ${
+                                              failedFields.includes(`dist-${dIdx}-outlet-${oIdx}-volPerDay`)
+                                                ? 'border-red-500 ring-2 ring-red-100 bg-red-50/20'
+                                                : 'border-slate-200 focus:border-blue-500'
+                                            }`}
+                                          />
+                                        </div>
+
+                                        <div className="space-y-1">
+                                          <label className="text-[9px] font-bold text-gray-400 uppercase">Permit Status</label>
+                                          <select
+                                            value={outlet.permitStatus}
+                                            onChange={(e) => {
+                                              const next = [...formData.distributors];
+                                              const nextStatus = e.target.value as any;
+                                              next[dIdx].outlets[oIdx].permitStatus = nextStatus;
+                                              if (nextStatus === 'None') {
+                                                next[dIdx].outlets[oIdx].levyInfo = 'Does not Qualify';
+                                              }
+                                              setFormData(prev => ({ ...prev, distributors: next }));
+                                            }}
+                                            className="w-full px-3 py-1.5 rounded-lg border border-slate-200 outline-none text-xs bg-white text-gray-700 font-semibold"
+                                          >
+                                            <option value="None">None</option>
+                                            <option value="Valid">Valid</option>
+                                            <option value="Expired">Expired</option>
+                                          </select>
+                                        </div>
+
+                                        <div className="space-y-1">
+                                          <label className="text-[9px] font-bold text-gray-400 uppercase">Levy Info</label>
+                                          <input
+                                            type="text"
+                                            placeholder="Paid / Unpaid / Details"
+                                            value={outlet.levyInfo}
+                                            onChange={(e) => {
+                                              const next = [...formData.distributors];
+                                              next[dIdx].outlets[oIdx].levyInfo = e.target.value;
+                                              setFormData(prev => ({ ...prev, distributors: next }));
+                                            }}
+                                            className="w-full px-3 py-1.5 rounded-lg border border-slate-200 focus:border-blue-500 outline-none text-xs bg-white"
+                                          />
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Source</label>
-                      <input
-                        type="text"
-                        name="source"
-                        value={formData.source}
-                        onChange={handleChange}
-                        className={`w-full px-4 py-2 rounded-xl border outline-none text-xs transition-all ${
-                          failedFields.includes('source')
-                            ? 'border-red-500 focus:border-red-500 focus:ring-red-200 ring-2 ring-red-100 bg-red-50/20'
-                            : 'border-gray-200 focus:border-blue-500'
-                        }`}
-                      />
-                    </div>
-                  </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFormData(prev => ({
+                            ...prev,
+                            distributors: [
+                              ...prev.distributors,
+                              {
+                                name: '',
+                                contacts: '',
+                                volPerDay: '',
+                                permitNo: '',
+                                areaOfSale: '',
+                                outlets: [{ location: '', volPerDay: '', permitStatus: 'None', levyInfo: 'Does not Qualify' }],
+                                natureOfProduce: [],
+                                prices: {}
+                              }
+                            ]
+                          }));
+                        }}
+                        className="w-full py-3.5 border-2 border-dashed border-slate-200 hover:border-blue-500 hover:bg-blue-50/10 text-slate-500 hover:text-blue-600 rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        + Add Distributor
+                      </button>
+                    </motion.div>
+                  )}
 
                   <div className="flex justify-between pt-4">
                     <button
@@ -2674,7 +3547,7 @@ export default function App() {
                         ) : (
                           <>
                             <Save className="w-5 h-5" />
-                            Submit & Sync to Sheet
+                            {isAmendment ? 'Submit Amendment & Overwrite' : 'Submit & Sync to Sheet'}
                           </>
                         )}
                       </button>
